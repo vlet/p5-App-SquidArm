@@ -1,0 +1,48 @@
+#!/usr/bin/perl
+use strict;
+use warnings;
+use Getopt::Long;
+use AnyEvent;
+use App::SquidArm::Server;
+use App::SquidArm::Conf;
+
+my $conf     = '/etc/squid3/sarm.conf';
+my $debug    = '';
+my $nodaemon = '';
+
+GetOptions(
+    "conf=s"   => \$conf,
+    "nodaemon" => \$nodaemon,
+    "debug"    => \$debug
+) or die "Error in command line arguments\n";
+
+$conf = App::SquidArm::Conf->new( conf => $conf )->parse;
+
+use Data::Dumper;
+print Dumper $conf;
+#
+my $w = AE::cv;
+
+my $server = App::SquidArm::Server->new(
+    map {
+        my $value = $conf->tag($_);
+        defined $value ? ( $_ => $value->[0] ) : ()
+    } (qw(host port access_log allowed db_driver db_file)),
+)->listen;
+print Dumper $server;
+
+my @sig = ();
+push @sig, AE::signal HUP => sub {
+    $server->stop;
+    $w->send();
+};
+
+my $term = sub {
+    $server->stop;
+    $w->send();
+};
+
+push @sig, AE::signal TERM => $term;
+push @sig, AE::signal INT  => $term;
+
+$w->recv();

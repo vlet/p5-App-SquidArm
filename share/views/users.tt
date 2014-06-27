@@ -1,0 +1,90 @@
+            <div class="row">
+                <div class="col-lg-12">
+                    <h1 class="page-header">Пользователи</h1>
+                </div>
+                <!-- /.col-lg-12 -->
+            </div>
+            <!-- /.row -->
+            <div class="row">
+                <div class="col-lg-12">
+                    <div>
+                      <table>
+                        <thead>
+                          <tr>
+                            <th></th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                        </tbody>
+                      </table>
+                    </div>
+                    <div class="panel panel-default hide" id="panel-month">
+                        <div class="panel-heading">
+                            Трафик пользователей
+                        </div>
+                        <!-- /.panel-heading -->
+                        <div class="panel-body">
+                          <div class="table-responsive">
+                            <table class="table table-striped table-bordered table-hover"
+                              id="users-month">
+                              <thead>
+                                <tr>
+                                  <th>Дата</th>
+                                  <th>Кэш</th>
+                                  <th>Загружено</th>
+                                  <th>Запросы</th>
+                              </tr>
+                              </thead>
+                              <tfoot>
+                                <tr>
+                                  <th>Дата</th>
+                                  <th>Кэш</th>
+                                  <th>Загружено</th>
+                                  <th>Запросы</th>
+                                </tr>
+                              </tfoot>
+                            </table>
+                          </div>
+                          <!-- /.table-responsive -->
+                        </div>
+                        <!-- /.panel-body -->
+                    </div>
+                    <!-- /.panel -->
+                    <div class="panel panel-default hide" id="panel-day">
+                        <div class="panel-heading">
+                            Трафик пользователей
+                        </div>
+                        <!-- /.panel-heading -->
+                        <div class="panel-body">
+                          <div class="table-responsive">
+                            <table class="table table-striped table-bordered table-hover"
+                                id="users-day">
+                              <thead>
+                                <tr>
+                                  <th>Пользователь</th>
+                                  <th>Кэш</th>
+                                  <th>Загружено</th>
+                                  <th>Запросы</th>
+                              </tr>
+                              </thead>
+                              <tfoot>
+                                <tr>
+                                  <th>Пользователь</th>
+                                  <th>Кэш</th>
+                                  <th>Загружено</th>
+                                  <th>Запросы</th>
+                                </tr>
+                              </tfoot>
+                            </table>
+                          </div>
+                          <!-- /.table-responsive -->
+                        </div>
+                        <!-- /.panel-body -->
+                    </div>
+
+                    <!-- /.panel -->
+                </div>
+                <!-- /.col-lg-12 -->
+            </div>
+            <!-- /.row -->
+

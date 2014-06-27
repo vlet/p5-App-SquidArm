@@ -1,0 +1,5 @@
+    <!-- Page-Level Plugin Scripts - Dashboard -->
+    <script src="/vendors/raphael/raphael-min.js"></script>
+    <script src="/vendors/morris.js/morris.min.js"></script>
+    <!-- Page-Level Demo Scripts - Dashboard - Use for reference  -->
+    <script src="/js/dashboard.js"></script>

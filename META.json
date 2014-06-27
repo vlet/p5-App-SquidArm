@@ -60,6 +60,17 @@
       }
    },
    "release_status" : "unstable",
+   "resources" : {
+      "bugtracker" : {
+         "web" : "https://github.com/vlet/p5-App-SquidArm/issues"
+      },
+      "homepage" : "https://github.com/vlet/p5-App-SquidArm",
+      "repository" : {
+         "type" : "git",
+         "url" : "git://github.com/vlet/p5-App-SquidArm.git",
+         "web" : "https://github.com/vlet/p5-App-SquidArm"
+      }
+   },
    "version" : "0.01",
    "x_authority" : "cpan:CRUX"
 }

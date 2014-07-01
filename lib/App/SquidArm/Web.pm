@@ -60,4 +60,9 @@ get '/users/**' => sub {
     tmpl 'users', { splat => to_dumper($splat) };
 };
 
+get '/user/**' => sub {
+    my ($splat) = splat;
+    tmpl 'users';
+};
+
 1

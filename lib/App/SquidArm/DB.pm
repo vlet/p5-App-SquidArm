@@ -4,9 +4,8 @@ use warnings;
 use DBI;
 use Carp;
 
-# maximum inserted rows
-# depends on SQLITE_MAX_VARIABLE_NUMBER which default is 999
-our $MAX_INSERT = 60;
+# SQLITE_MAX_VARIABLE_NUMBER default is 999
+our $MAX_VARS = 999;
 
 sub new {
     my ( $class, %opts ) = @_;
@@ -25,13 +24,23 @@ sub create_tables {
     SQL
 
     $dbh->do(<<"    SQL");
+        CREATE TABLE IF NOT EXISTS hosts (
+            id      INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+            host    TEXT,
+            UNIQUE(host)
+        )
+    SQL
+
+    $dbh->do(<<"    SQL");
         CREATE TABLE IF NOT EXISTS traf_stat(
             dt      TIMESTAMP NOT NULL,
             user    TEXT NOT NULL,
+            host    INTEGER NOT NULL,
             misses  INT NOT NULL,
             hits    INT NOT NULL,
             reqs    INT NOT NULL,
-            UNIQUE(dt,user)
+            FOREIGN KEY(host) REFERENCES hosts(id),
+            UNIQUE(dt,user,host)
         )
     SQL
 
@@ -80,33 +89,59 @@ sub suf {
 
 sub add_to_access {
     my ( $self, $values ) = @_;
-    my $cnt   = 15;
-    my $suf   = $self->suf( $values->[0] );
-    my $query = "INSERT INTO access_log_$suf VALUES " . join ",",
-      map { ( '(?' . ',?' x ( $cnt - 1 ) . ') ' ) }
-      ( 1 .. int( @$values / $cnt ) );
+    my $cnt = 15;
+    while ( my @vars = splice( @$values, 0, int( $MAX_VARS / $cnt ) * $cnt ) ) {
+        my $suf   = $self->suf( $vars[0] );
+        my $query = "INSERT INTO access_log_$suf VALUES " . join ",",
+          map { ( '(?' . ',?' x ( $cnt - 1 ) . ') ' ) }
+          ( 1 .. int( @vars / $cnt ) );
 
-    $self->db->do( $query, undef, @$values );
+        $self->db->do( $query, undef, @vars );
+    }
 }
 
 sub add_to_stat {
     my ( $self, $values ) = @_;
     my $dbh = $self->db;
-    my $cnt = 5;
+    my $cnt = 6;
     while ( my @vars = splice( @$values, 0, $cnt ) ) {
 
         my $ret = $dbh->do( <<"        SQL", undef, @vars );
             UPDATE traf_stat
-            SET misses=misses+?3, hits=hits+?4, reqs=reqs+?5
-            WHERE dt=?1 AND user=?2
+            SET misses=misses+?4, hits=hits+?5, reqs=reqs+?6
+            WHERE dt=?1 AND user=?2 AND host=(
+                SELECT id
+                FROM hosts
+                WHERE host=?3
+            )
         SQL
 
         eval {
             $ret = $dbh->do( <<"            SQL", undef, @vars );
-                INSERT INTO traf_stat VALUES (?,?,?,?,?)
+                INSERT INTO traf_stat VALUES (?,?,(
+                    SELECT id
+                    FROM hosts
+                    WHERE host=?
+                ),?,?,?)
             SQL
         } if $ret == 0;
     }
+}
+
+sub add_to_hosts {
+    my ( $self, $values ) = @_;
+    my $cnt = 1;
+    my $dbh = $self->db;
+    while ( my @vars = splice( @$values, 0, int( $MAX_VARS / $cnt ) * $cnt ) ) {
+        my $query = "INSERT OR IGNORE INTO hosts VALUES " . join ",",
+          map { '(NULL, ?)' } ( 1 .. int( @vars / $cnt ) );
+
+        $self->db->do( $query, undef, @vars );
+    }
+}
+
+sub get_hosts {
+    shift->db->selectcol_arrayref("SELECT host FROM hosts");
 }
 
 sub db {
@@ -174,7 +209,7 @@ sub traf_stat {
 
 }
 
-sub user_traf_stat {
+sub traf_stat_user {
     my ( $self, $year, $month, $day ) = @_;
     my $dbh = $self->db;
     my $start =
@@ -191,6 +226,25 @@ sub user_traf_stat {
         GROUP BY user
     SQL
 
+}
+
+sub user_traf_stat {
+    my ( $self, $user, $year, $month, $day ) = @_;
+    my $dbh = $self->db;
+    my $start =
+      sprintf( "%d-%02d-%02d 00", $year, $month, ( defined $day ? $day : 1 ) );
+    my $end =
+      sprintf( "%d-%02d-%02d 24", $year, $month, ( defined $day ? $day : 31 ) );
+
+    my $res = $dbh->selectall_arrayref( <<"    SQL", undef, $user );
+        SELECT
+            hosts.host,
+            SUM(hits), SUM(misses), SUM(reqs)
+        FROM traf_stat
+        LEFT JOIN hosts ON hosts.id=traf_stat.host
+        WHERE dt >= '$start' AND dt <= '$end' AND user=?
+        GROUP BY hosts.host
+    SQL
 }
 
 sub begin {

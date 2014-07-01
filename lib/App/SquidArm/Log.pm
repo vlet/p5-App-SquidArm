@@ -47,16 +47,10 @@ sub new {
 }
 
 sub parser {
-    my ( $self, $buf_ref, $cb_access, $cb_stat, $max_rec ) = @_;
-    my $store = [];
-    my $stat  = [];
-    my $st    = {};
-    my $rec   = 0;
-    $max_rec ||= 1e10;
+    my ( $self, $buf_ref, $records, $stats, $max_rec ) = @_;
     my @data;
 
     while ( $$buf_ref =~ /$squid_log_re/gc ) {
-        $rec++;
 
         @data = (
             $1,  $2, $3,               $4, $5, $6, $7, $8,
@@ -73,13 +67,8 @@ sub parser {
             $data[8] = undef;
         }
 
-        push @$store, @data;
-
-        if ( $cb_access && $rec >= $max_rec ) {
-            $cb_access->($store);
-            $store = [];
-            $rec   = 0;
-        }
+        push @$records, @data;
+        next unless defined $data[8];
 
         my @ts = ( localtime( $data[0] ) )[ 5, 4, 3, 2 ];
         $ts[0] += 1900;
@@ -88,28 +77,36 @@ sub parser {
         my $key = defined $data[10] ? $data[10] : $data[3];
         if ( index( $data[4], 'DENIED' ) == -1 ) {
             if ( index( $data[4], 'HIT' ) != -1 ) {
-                $st->{$ts}->{$key}->{hit} += $data[6];
+                $stats->{$ts}->{$key}->{ $data[8] }->{hit} += $data[6];
             }
             else {
-                $st->{$ts}->{$key}->{miss} += $data[6];
+                $stats->{$ts}->{$key}->{ $data[8] }->{miss} += $data[6];
             }
         }
-        $st->{$ts}->{$key}->{req}++;
+        $stats->{$ts}->{$key}->{ $data[8] }->{req}++;
     }
-
-    $cb_access->($store) if $cb_access && $rec;
-
-    for my $ts ( keys %$st ) {
-        for my $user ( keys %{ $st->{$ts} } ) {
-            push @$stat, $ts, $user,
-              map { $st->{$ts}->{$user}->{$_} || 0 } (qw(miss hit req));
-        }
-    }
-
-    $cb_stat->($stat) if $cb_stat && @$stat;
 
     my $i = pos $$buf_ref;
     return $i;
+}
+
+sub flatten {
+    my ( $self, $stats, $cache ) = @_;
+    my ( @stat, @hosts );
+    for my $ts ( keys %$stats ) {
+        for my $user ( keys %{ $stats->{$ts} } ) {
+            for my $host ( keys %{ $stats->{$ts}->{$user} } ) {
+                push @stat, $ts, $user, $host,
+                  map { $stats->{$ts}->{$user}->{$host}->{$_} || 0 }
+                  (qw(miss hit req));
+                if ( !exists $cache->{$host} ) {
+                    push @hosts, $host;
+                    $cache->{$host} = 1;
+                }
+            }
+        }
+    }
+    return \@stat, \@hosts;
 }
 
 =cut

@@ -10,10 +10,13 @@ use IO::AIO;
 sub new {
     my ( $class, %opts ) = @_;
     my $self = bless {
-        queue   => '',
-        aio     => 0,
-        written => 0,
-        conf    => {%opts},
+        queue       => '',
+        aio         => 0,
+        written     => 0,
+        conf        => {%opts},
+        records     => [],
+        stats       => {},
+        hosts_cache => {},
     }, $class;
 
     $self->init_parser;
@@ -32,6 +35,7 @@ sub init_parser {
 
     # Parent
     if ($pid) {
+        $0 = "squid arm [main]";
         $self->{parser_child} = AnyEvent->child(
             pid => $pid,
             cb  => sub {
@@ -53,9 +57,9 @@ sub init_parser {
 
     # Child
     else {
+        $0 = "squid arm [parser]";
         close $wr;
         my $start;
-        my $xyz = 0;
         while (1) {
             $start = AnyEvent->time;
             eval { $self->parser_helper($rd); };
@@ -92,19 +96,18 @@ sub parser_helper {
     require App::SquidArm::DB;
 
     my $p = App::SquidArm::Log->new;
-    use Data::Dumper;
-    print Dumper ($self);
-    print Dumper $self->conf('db_driver');
     my $db = $self->{db} = App::SquidArm::DB->new(
         db_driver => $self->conf('db_driver'),
         db_file   => $self->conf('db_file'),
     );
     $db->create_tables;
+    $self->{hosts_cache} = { map { $_ => 1 } @{ $db->get_hosts } };
 
     AE::log debug => "parser init db";
 
-    my $readed = 0;
-    my $w      = AE::cv;
+    my $readed   = 0;
+    my $w        = AE::cv;
+    my $interval = $self->conf('db_update_interval') || 1;
 
     AE::signal HUP => sub {
         $w->send();
@@ -114,45 +117,16 @@ sub parser_helper {
         $w->send(1);
     };
 
-    my $h;
+    my ( $h, $tm );
     $h = $self->{parser_pipe} = AnyEvent::Handle->new(
         fh      => $rd,
         on_read => sub {
             return unless length( $h->{rbuf} );
             AE::log debug => "parser got " . length( $h->{rbuf} );
-
-            #my $ilen = rindex($h->{rbuf},"\012") + 1;
-            #AE::log debug => 'parser find \n at position ' . $ilen;
-            #return unless $ilen;
-            #my $copy = substr( $h->{rbuf}, 0, $ilen,'');
             my $len;
             for ( 1 .. 2 ) {
-                eval {
-                    $db->begin;
-                    $len = $p->parser(
-                        \$h->{rbuf},
-                        sub {
-                            AE::log info => "adding "
-                              . ( @{ $_[0] } / 15 )
-                              . " access records";
-                            $db->add_to_access( $_[0] );
-                        },
-                        sub {
-                            AE::log info => "adding "
-                              . ( @{ $_[0] } / 5 )
-                              . " stat records";
-                            $db->add_to_stat( $_[0] );
-                        },
-                        $App::SquidArm::DB::MAX_INSERT,
-                    );
-                    $db->end;
-                };
-                if ($@) {
-                    $self->{save} = $h->{rbuf};
-                    $w->send();
-                    AE::log error => "parser error: $@";
-                    return;
-                }
+                $len =
+                  $p->parser( \$h->{rbuf}, $self->{records}, $self->{stats}, );
                 last if defined $len;
 
                 # first line failed in parser
@@ -176,17 +150,86 @@ sub parser_helper {
         on_error => sub {
             AE::log error => "reader error $!";
             AE::log debug => "readed $readed";
+            eval { ref $tm eq "ARRAY" ? $tm->[1]->() : $tm->cb->(); };
+            undef $tm;
             $w->send();
         },
         on_eof => sub {
             AE::log debug => "readed $readed";
+
+            # Call timer cb
+            eval { ref $tm eq "ARRAY" ? $tm->[1]->() : $tm->cb->(); };
+            undef $tm;
             $w->send(1);
         }
     );
-    $h->{rbuf} = $self->{save} if $self->{save};
+
+    my $create_timer;
+    $create_timer = sub {
+        return AE::timer $interval, 0, sub {
+            eval { $self->update_db( $p, $db ); };
+            if ($@) {
+                AE::log error => "failed db operations: $@";
+                undef $tm;
+                $w->send();
+            }
+            else {
+                $tm = $create_timer->();
+            }
+          }
+    };
+    $tm = $create_timer->();
 
     die unless $w->recv;
     AE::log info => "parser say goodbye!";
+}
+
+sub update_db {
+    my ( $self, $p, $db ) = @_;
+    my $cache = $self->{hosts_cache};
+
+    my ( $stat, $hosts ) = $p->flatten( $self->{stats}, $cache );
+    if (@$hosts) {
+        my $cnt = @$hosts;
+        my $t0  = AE::time;
+        $db->begin;
+        $db->add_to_hosts($hosts);
+        $db->end;
+        my $elapsed = AE::time - $t0;
+        AE::log(
+            ( $elapsed > 0.5 ? "warn" : "info" ) =>
+              sprintf "Adding %i hosts records took %.4f sec",
+            $cnt, $elapsed
+        );
+    }
+    if (@$stat) {
+        my $cnt = @$stat / 6;
+        my $t0  = AE::time;
+        $db->begin;
+        $db->add_to_stat($stat);
+        $db->end;
+        my $elapsed = AE::time - $t0;
+        AE::log(
+            ( $elapsed > 0.5 ? "warn" : "info" ) =>
+              sprintf "Adding %i stat records took %.4f sec",
+            $cnt, $elapsed
+        );
+        $self->{stats} = {};
+    }
+    if ( @{ $self->{records} } ) {
+        my $cnt = @{ $self->{records} } / 15;
+        my $t0  = AE::time;
+        $db->begin;
+        $db->add_to_access( $self->{records} );
+        $db->end;
+        my $elapsed = AE::time - $t0;
+        AE::log(
+            ( $elapsed > 0.5 ? "warn" : "info" ) =>
+              sprintf "Adding %i access records took %.4f sec",
+            $cnt, $elapsed
+        );
+        $self->{records} = [];
+    }
 }
 
 sub openlog {

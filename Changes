@@ -1,11 +1,15 @@
 Revision history for Perl extension App-SquidArm
 
 {{$NEXT}}
-    - Updated schema (added hosts table, added host column to traf_stat)
+    - Updated schema (added hosts/users tables, added host column to traf_stat)
     - Simplified parser
     - Deferred db update (default every 1 sec, option `db_update_interval`)
-    - Hosts cache
-    - updated API
+    - Hosts/users cache
+    - Updated API
+    - Implemented reloading of log/db modules when parser restarts
+    - Fixed signal handling in parser process
+    - Open log for append
+    - Fsync log file on stop
 
 0.01 2014-06-27T20:01:57Z
 

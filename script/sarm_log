@@ -18,9 +18,6 @@ GetOptions(
 
 $conf = App::SquidArm::Conf->new( conf => $conf )->parse;
 
-use Data::Dumper;
-print Dumper $conf;
-#
 my $w = AE::cv;
 
 my $server = App::SquidArm::Server->new(
@@ -29,19 +26,15 @@ my $server = App::SquidArm::Server->new(
         defined $value ? ( $_ => $value->[0] ) : ()
     } (qw(host port access_log allowed db_driver db_file)),
 )->listen;
-print Dumper $server;
 
 my @sig = ();
-push @sig, AE::signal HUP => sub {
-    $server->stop;
-    $w->send();
-};
 
 my $term = sub {
     $server->stop;
     $w->send();
 };
 
+push @sig, AE::signal HUP  => $term;
 push @sig, AE::signal TERM => $term;
 push @sig, AE::signal INT  => $term;
 

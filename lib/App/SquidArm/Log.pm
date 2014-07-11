@@ -91,22 +91,26 @@ sub parser {
 }
 
 sub flatten {
-    my ( $self, $stats, $cache ) = @_;
-    my ( @stat, @hosts );
+    my ( $self, $stats, $hcache, $ucache ) = @_;
+    my ( @stat, @hosts, @users );
     for my $ts ( keys %$stats ) {
         for my $user ( keys %{ $stats->{$ts} } ) {
+            if ( !exists $ucache->{$user} ) {
+                push @users, $user;
+                $ucache->{$user} = 1;
+            }
             for my $host ( keys %{ $stats->{$ts}->{$user} } ) {
                 push @stat, $ts, $user, $host,
                   map { $stats->{$ts}->{$user}->{$host}->{$_} || 0 }
                   (qw(miss hit req));
-                if ( !exists $cache->{$host} ) {
+                if ( !exists $hcache->{$host} ) {
                     push @hosts, $host;
-                    $cache->{$host} = 1;
+                    $hcache->{$host} = 1;
                 }
             }
         }
     }
-    return \@stat, \@hosts;
+    return \@stat, \@hosts, \@users;
 }
 
 =cut

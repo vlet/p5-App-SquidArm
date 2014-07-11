@@ -17,6 +17,7 @@ sub new {
         records     => [],
         stats       => {},
         hosts_cache => {},
+        users_cache => {},
     }, $class;
 
     $self->init_parser;
@@ -88,10 +89,26 @@ sub init_parser {
     }
 }
 
+sub _unload_modules {
+    for my $m (@_) {
+        my $path = join( '/', split /::/, $m ) . '.pm';
+        next if !exists $INC{$path};
+        delete $INC{$path};
+        {
+            no strict 'refs';
+            for my $sym ( keys %{ $m . '::' } ) {
+                delete ${ $m . '::' }{$sym};
+            }
+        }
+    }
+}
+
 sub parser_helper {
 
     my ( $self, $rd ) = @_;
 
+    _unload_modules( 'App::SquidArm::Log', 'App::SquidArm::DB' )
+      if $self->conf('parser_reload_on_restart');
     require App::SquidArm::Log;
     require App::SquidArm::DB;
 
@@ -102,6 +119,7 @@ sub parser_helper {
     );
     $db->create_tables;
     $self->{hosts_cache} = { map { $_ => 1 } @{ $db->get_hosts } };
+    $self->{users_cache} = { map { $_ => 1 } @{ $db->get_users } };
 
     AE::log debug => "parser init db";
 
@@ -109,11 +127,13 @@ sub parser_helper {
     my $w        = AE::cv;
     my $interval = $self->conf('db_update_interval') || 1;
 
-    AE::signal HUP => sub {
+    my $hup = AE::signal HUP => sub {
+        AE::log crit => "got HUP";
         $w->send();
     };
 
-    AE::signal TERM => sub {
+    my $term = AE::signal TERM => sub {
+        AE::log crit => "got TERM";
         $w->send(1);
     };
 
@@ -165,76 +185,88 @@ sub parser_helper {
     );
 
     my $create_timer;
-    $create_timer = sub {
-        return AE::timer $interval, 0, sub {
-            eval { $self->update_db( $p, $db ); };
-            if ($@) {
-                AE::log error => "failed db operations: $@";
-                undef $tm;
-                $w->send();
-            }
-            else {
-                $tm = $create_timer->();
-            }
-          }
-    };
-    $tm = $create_timer->();
+    $tm = (
+        $create_timer = sub {
+            return AE::timer $interval, 0, sub {
+                eval { $self->update_db($p); };
+                if ($@) {
+                    AE::log error => "failed db operations: $@";
+                    undef $tm;
+                    $w->send();
+                }
+                else {
+                    $tm = $create_timer->();
+                }
+              }
+        }
+    )->();
 
     die unless $w->recv;
     AE::log info => "parser say goodbye!";
 }
 
-sub update_db {
-    my ( $self, $p, $db ) = @_;
-    my $cache = $self->{hosts_cache};
+sub update_db_hook {
+    my ( $self, $name, $cnt, $cb ) = @_;
+    return unless $cnt;
+    my $t0 = AE::time;
+    $self->{db}->begin();
+    $cb->();
+    $self->{db}->end();
+    my $elapsed = AE::time - $t0;
+    AE::log(
+        ( $elapsed > 0.5 ? "warn" : "info" ) =>
+          sprintf "Adding %i %s records took %.4f sec",
+        $cnt, $name, $elapsed
+    );
+}
 
-    my ( $stat, $hosts ) = $p->flatten( $self->{stats}, $cache );
-    if (@$hosts) {
-        my $cnt = @$hosts;
-        my $t0  = AE::time;
-        $db->begin;
-        $db->add_to_hosts($hosts);
-        $db->end;
-        my $elapsed = AE::time - $t0;
-        AE::log(
-            ( $elapsed > 0.5 ? "warn" : "info" ) =>
-              sprintf "Adding %i hosts records took %.4f sec",
-            $cnt, $elapsed
-        );
-    }
-    if (@$stat) {
-        my $cnt = @$stat / 6;
-        my $t0  = AE::time;
-        $db->begin;
-        $db->add_to_stat($stat);
-        $db->end;
-        my $elapsed = AE::time - $t0;
-        AE::log(
-            ( $elapsed > 0.5 ? "warn" : "info" ) =>
-              sprintf "Adding %i stat records took %.4f sec",
-            $cnt, $elapsed
-        );
-        $self->{stats} = {};
-    }
-    if ( @{ $self->{records} } ) {
-        my $cnt = @{ $self->{records} } / 15;
-        my $t0  = AE::time;
-        $db->begin;
-        $db->add_to_access( $self->{records} );
-        $db->end;
-        my $elapsed = AE::time - $t0;
-        AE::log(
-            ( $elapsed > 0.5 ? "warn" : "info" ) =>
-              sprintf "Adding %i access records took %.4f sec",
-            $cnt, $elapsed
-        );
-        $self->{records} = [];
-    }
+sub update_db {
+    my ( $self, $p ) = @_;
+    my $db     = $self->{db};
+    my $hcache = $self->{hosts_cache};
+    my $ucache = $self->{users_cache};
+
+    my ( $stat, $hosts, $users ) =
+      $p->flatten( $self->{stats}, $hcache, $ucache );
+
+    $self->update_db_hook(
+        "host",
+        scalar @$hosts,
+        sub {
+            $db->add_to_hosts($hosts);
+        }
+    );
+
+    $self->update_db_hook(
+        "user",
+        scalar @$users,
+        sub {
+            $db->add_to_users($users);
+        }
+    );
+
+    $self->update_db_hook(
+        "stat",
+        @$stat / 6,
+        sub {
+            $db->add_to_stat($stat);
+            $self->{stats} = {};
+        }
+    );
+
+    $self->update_db_hook(
+        "access",
+        @{ $self->{records} } / 15,
+        sub {
+            $db->add_to_access( $self->{records} );
+            $self->{records} = [];
+        }
+    );
 }
 
 sub openlog {
     my $self = shift;
-    open $self->{access_log_fh}, '>', $self->conf('access_log') or die $!;
+    open $self->{access_log_fh}, '>>', $self->conf('access_log') or die $!;
 }
 
 #=cut
@@ -378,6 +410,7 @@ sub writelog_c {
 sub stop {
     my $self = shift;
     undef $self->{server};
+    aio_fsync $self->{access_log_fh} if $self->{access_log_fh};
     $self;
 }
 

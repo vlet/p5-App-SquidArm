@@ -32,14 +32,23 @@ sub create_tables {
     SQL
 
     $dbh->do(<<"    SQL");
+        CREATE TABLE IF NOT EXISTS users (
+            id      INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+            user    TEXT,
+            UNIQUE(user)
+        )
+    SQL
+
+    $dbh->do(<<"    SQL");
         CREATE TABLE IF NOT EXISTS traf_stat(
             dt      TIMESTAMP NOT NULL,
-            user    TEXT NOT NULL,
+            user    INTEGER NOT NULL,
             host    INTEGER NOT NULL,
-            misses  INT NOT NULL,
-            hits    INT NOT NULL,
-            reqs    INT NOT NULL,
+            misses  INTEGER NOT NULL,
+            hits    INTEGER NOT NULL,
+            reqs    INTEGER NOT NULL,
             FOREIGN KEY(host) REFERENCES hosts(id),
+            FOREIGN KEY(user) REFERENCES users(id),
             UNIQUE(dt,user,host)
         )
     SQL
@@ -109,7 +118,11 @@ sub add_to_stat {
         my $ret = $dbh->do( <<"        SQL", undef, @vars );
             UPDATE traf_stat
             SET misses=misses+?4, hits=hits+?5, reqs=reqs+?6
-            WHERE dt=?1 AND user=?2 AND host=(
+            WHERE dt=?1 AND user=(
+                SELECT id
+                FROM users
+                WHERE user=?2
+            ) AND host=(
                 SELECT id
                 FROM hosts
                 WHERE host=?3
@@ -118,7 +131,11 @@ sub add_to_stat {
 
         eval {
             $ret = $dbh->do( <<"            SQL", undef, @vars );
-                INSERT INTO traf_stat VALUES (?,?,(
+                INSERT INTO traf_stat VALUES (?,(
+                    SELECT id
+                    FROM users
+                    WHERE user=?
+                ),(
                     SELECT id
                     FROM hosts
                     WHERE host=?
@@ -140,8 +157,24 @@ sub add_to_hosts {
     }
 }
 
+sub add_to_users {
+    my ( $self, $values ) = @_;
+    my $cnt = 1;
+    my $dbh = $self->db;
+    while ( my @vars = splice( @$values, 0, int( $MAX_VARS / $cnt ) * $cnt ) ) {
+        my $query = "INSERT OR IGNORE INTO users VALUES " . join ",",
+          map { '(NULL, ?)' } ( 1 .. int( @vars / $cnt ) );
+
+        $self->db->do( $query, undef, @vars );
+    }
+}
+
 sub get_hosts {
     shift->db->selectcol_arrayref("SELECT host FROM hosts");
+}
+
+sub get_users {
+    shift->db->selectcol_arrayref("SELECT user FROM users");
 }
 
 sub db {
@@ -219,11 +252,11 @@ sub traf_stat_user {
 
     my $res = $dbh->selectall_arrayref( <<"    SQL", undef );
         SELECT
-            user,
+            users.user,
             SUM(hits), SUM(misses), SUM(reqs)
-        FROM traf_stat
-        WHERE dt >= '$start' AND dt <= '$end'
-        GROUP BY user
+        FROM traf_stat, users
+        WHERE dt >= '$start' AND dt <= '$end' AND users.id=traf_stat.user
+        GROUP BY users.user
     SQL
 
 }
@@ -240,9 +273,10 @@ sub user_traf_stat {
         SELECT
             hosts.host,
             SUM(hits), SUM(misses), SUM(reqs)
-        FROM traf_stat
-        LEFT JOIN hosts ON hosts.id=traf_stat.host
-        WHERE dt >= '$start' AND dt <= '$end' AND user=?
+        FROM traf_stat, hosts, users
+        WHERE dt >= '$start' AND dt <= '$end'
+            AND users.user=? AND users.id=traf_stat.user
+            AND hosts.id=traf_stat.host
         GROUP BY hosts.host
     SQL
 }

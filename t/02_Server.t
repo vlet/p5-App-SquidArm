@@ -52,10 +52,11 @@ subtest 'server' => sub {
             $wr->autoflush(1);
 
             App::SquidArm::Server->new(
-                host      => '127.0.0.1',
-                port      => $port,
-                db_file   => $db_fname,
-                db_driver => 'sqlite',
+                host        => '127.0.0.1',
+                port        => $port,
+                db_file     => $db_fname,
+                db_driver   => 'sqlite',
+                mcache_port => $port + 1,
               )->listen(
                 on_data => sub {
                     my $data_ref = shift;
@@ -154,11 +155,12 @@ subtest 'writing' => sub {
             my $handle = AnyEvent::Handle->new( fh => $wr );
 
             App::SquidArm::Server->new(
-                host       => '127.0.0.1',
-                port       => $port,
-                access_log => $fname,
-                db_file    => $db_fname,
-                db_driver  => 'sqlite',
+                host        => '127.0.0.1',
+                port        => $port,
+                access_log  => $fname,
+                db_file     => $db_fname,
+                db_driver   => 'sqlite',
+                mcache_port => $port + 1,
               )->listen(
                 on_eof => sub {
                     my $rsize = shift;

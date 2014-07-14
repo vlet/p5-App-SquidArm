@@ -24,7 +24,10 @@ my $server = App::SquidArm::Server->new(
     map {
         my $value = $conf->tag($_);
         defined $value ? ( $_ => $value->[0] ) : ()
-    } (qw(host port access_log allowed db_driver db_file)),
+      } (
+        qw(host port access_log allowed db_driver db_file db_update_interval
+          parser_reload_on_restart ignore_denied )
+      ),
 )->listen;
 
 my @sig = ();

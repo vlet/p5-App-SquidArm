@@ -43,12 +43,14 @@ my $url_re = qr/^
 $/x;
 
 sub new {
-    bless {}, shift;
+    my $class = shift;
+    bless {@_}, $class;
 }
 
 sub parser {
-    my ( $self, $buf_ref, $records, $stats, $max_rec ) = @_;
+    my ( $self, $buf_ref, $records, $stats ) = @_;
     my @data;
+    my $ignore = $self->{ignore_denied};
 
     while ( $$buf_ref =~ /$squid_log_re/gc ) {
 
@@ -82,8 +84,11 @@ sub parser {
             else {
                 $stats->{$ts}->{$key}->{ $data[8] }->{miss} += $data[6];
             }
+            $stats->{$ts}->{$key}->{ $data[8] }->{req}++;
         }
-        $stats->{$ts}->{$key}->{ $data[8] }->{req}++;
+        elsif ( !$ignore ) {
+            $stats->{$ts}->{$key}->{ $data[8] }->{denied}++;
+        }
     }
 
     my $i = pos $$buf_ref;
@@ -102,7 +107,7 @@ sub flatten {
             for my $host ( keys %{ $stats->{$ts}->{$user} } ) {
                 push @stat, $ts, $user, $host,
                   map { $stats->{$ts}->{$user}->{$host}->{$_} || 0 }
-                  (qw(miss hit req));
+                  (qw(miss hit req denied));
                 if ( !exists $hcache->{$host} ) {
                     push @hosts, $host;
                     $hcache->{$host} = 1;

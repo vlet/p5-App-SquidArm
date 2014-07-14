@@ -7,6 +7,9 @@ use Carp;
 # SQLITE_MAX_VARIABLE_NUMBER default is 999
 our $MAX_VARS = 999;
 
+# SQLITE_MAX_COMPOUND_SELECT default is 500
+our $MAX_COMPOUND = 500;
+
 sub new {
     my ( $class, %opts ) = @_;
     bless {%opts}, $class;
@@ -47,6 +50,7 @@ sub create_tables {
             misses  INTEGER NOT NULL,
             hits    INTEGER NOT NULL,
             reqs    INTEGER NOT NULL,
+            denies  INTEGER NOT NULL,
             FOREIGN KEY(host) REFERENCES hosts(id),
             FOREIGN KEY(user) REFERENCES users(id),
             UNIQUE(dt,user,host)
@@ -112,12 +116,12 @@ sub add_to_access {
 sub add_to_stat {
     my ( $self, $values ) = @_;
     my $dbh = $self->db;
-    my $cnt = 6;
+    my $cnt = 7;
     while ( my @vars = splice( @$values, 0, $cnt ) ) {
 
         my $ret = $dbh->do( <<"        SQL", undef, @vars );
             UPDATE traf_stat
-            SET misses=misses+?4, hits=hits+?5, reqs=reqs+?6
+            SET misses=misses+?4, hits=hits+?5, reqs=reqs+?6, denies=denies+?7
             WHERE dt=?1 AND user=(
                 SELECT id
                 FROM users
@@ -139,7 +143,7 @@ sub add_to_stat {
                     SELECT id
                     FROM hosts
                     WHERE host=?
-                ),?,?,?)
+                ),?,?,?,?)
             SQL
         } if $ret == 0;
     }
@@ -147,11 +151,10 @@ sub add_to_stat {
 
 sub add_to_hosts {
     my ( $self, $values ) = @_;
-    my $cnt = 1;
     my $dbh = $self->db;
-    while ( my @vars = splice( @$values, 0, int( $MAX_VARS / $cnt ) * $cnt ) ) {
+    while ( my @vars = splice( @$values, 0, $MAX_COMPOUND ) ) {
         my $query = "INSERT OR IGNORE INTO hosts VALUES " . join ",",
-          map { '(NULL, ?)' } ( 1 .. int( @vars / $cnt ) );
+          map { '(NULL, ?)' } ( 1 .. @vars );
 
         $self->db->do( $query, undef, @vars );
     }
@@ -159,11 +162,10 @@ sub add_to_hosts {
 
 sub add_to_users {
     my ( $self, $values ) = @_;
-    my $cnt = 1;
     my $dbh = $self->db;
-    while ( my @vars = splice( @$values, 0, int( $MAX_VARS / $cnt ) * $cnt ) ) {
+    while ( my @vars = splice( @$values, 0, $MAX_COMPOUND ) ) {
         my $query = "INSERT OR IGNORE INTO users VALUES " . join ",",
-          map { '(NULL, ?)' } ( 1 .. int( @vars / $cnt ) );
+          map { '(NULL, ?)' } ( 1 .. @vars );
 
         $self->db->do( $query, undef, @vars );
     }
@@ -213,7 +215,7 @@ sub traf_stat {
     my $res = $dbh->selectall_arrayref( <<"    SQL", undef );
         SELECT
             strftime('$format',dt) as ts,
-            SUM(hits), SUM(misses), SUM(reqs)
+            SUM(hits), SUM(misses), SUM(reqs), SUM(denies)
         FROM traf_stat
         WHERE dt >= '$start' AND dt <= '$end'
         GROUP BY ts
@@ -253,7 +255,7 @@ sub traf_stat_user {
     my $res = $dbh->selectall_arrayref( <<"    SQL", undef );
         SELECT
             users.user,
-            SUM(hits), SUM(misses), SUM(reqs)
+            SUM(hits), SUM(misses), SUM(reqs), SUM(denies)
         FROM traf_stat, users
         WHERE dt >= '$start' AND dt <= '$end' AND users.id=traf_stat.user
         GROUP BY users.user
@@ -272,7 +274,7 @@ sub user_traf_stat {
     my $res = $dbh->selectall_arrayref( <<"    SQL", undef, $user );
         SELECT
             hosts.host,
-            SUM(hits), SUM(misses), SUM(reqs)
+            SUM(hits), SUM(misses), SUM(reqs), SUM(denies)
         FROM traf_stat, hosts, users
         WHERE dt >= '$start' AND dt <= '$end'
             AND users.user=? AND users.id=traf_stat.user

@@ -6,6 +6,8 @@ use AnyEvent::Handle;
 use AnyEvent::Socket;
 use AnyEvent::AIO;
 use IO::AIO;
+use App::SquidArm::Helper::Parser;
+use App::SquidArm::Helper::DB;
 
 sub new {
     my ( $class, %opts ) = @_;
@@ -25,7 +27,7 @@ sub new {
     $self;
 }
 
-# Fork separated parser process
+# Fork separated parser/db processes
 sub init_parser {
     my $self = shift;
     my ( $rd, $wr );
@@ -58,218 +60,37 @@ sub init_parser {
 
     # Child
     else {
-        $0 = "squid arm [parser]";
         close $wr;
-        my $start;
-        while (1) {
-            $start = AnyEvent->time;
-            eval { $self->parser_helper($rd); };
-            my $duration = AnyEvent->time - $start;
 
-            if ($@) {
-                $self->{parser_pipe}->destroy if $self->{parser_pipe};
-                $self->{db}->disconnect       if $self->{db};
-                AE::log error =>
-                  "parser die with error (after $duration sec): $@";
-                if ( $duration < 1 ) {
-                    AE::log error => "don't restart parser, "
-                      . "it dying too fast";
-                }
-                else {
-                    AE::log error => "restart parser";
-                    next;
-                }
-            }
-            else {
-                AE::log info => "parser normal exit: elapsed $duration sec";
-            }
-            last;
+        my ( $db_rd, $db_wr );
+        pipe $db_rd, $db_wr or die "db pipe failed\n";
+
+        my $pid = fork();
+        die "fork failed\n" unless defined $pid;
+
+        # Parser process
+        if ($pid) {
+            $0 = "squid arm [parser]";
+            close $db_rd;
+            my $parser =
+              App::SquidArm::Helper::Parser->new( conf => $self->{conf} );
+            $parser->eval_loop( $rd, $db_wr );
         }
-        exit;
-    }
-}
 
-sub _unload_modules {
-    for my $m (@_) {
-        my $path = join( '/', split /::/, $m ) . '.pm';
-        next if !exists $INC{$path};
-        delete $INC{$path};
-        {
-            no strict 'refs';
-            for my $sym ( keys %{ $m . '::' } ) {
-                delete ${ $m . '::' }{$sym};
-            }
+        # DB process
+        else {
+            $0 = "squid arm [db]";
+            close $db_wr;
+            my $db = App::SquidArm::Helper::DB->new( conf => $self->{conf} );
+            $db->eval_loop($db_rd);
         }
     }
-}
-
-sub parser_helper {
-
-    my ( $self, $rd ) = @_;
-
-    _unload_modules( 'App::SquidArm::Log', 'App::SquidArm::DB' )
-      if $self->conf('parser_reload_on_restart');
-    require App::SquidArm::Log;
-    require App::SquidArm::DB;
-
-    my $p = App::SquidArm::Log->new;
-    my $db = $self->{db} = App::SquidArm::DB->new(
-        db_driver => $self->conf('db_driver'),
-        db_file   => $self->conf('db_file'),
-    );
-    $db->create_tables;
-    $self->{hosts_cache} = { map { $_ => 1 } @{ $db->get_hosts } };
-    $self->{users_cache} = { map { $_ => 1 } @{ $db->get_users } };
-
-    AE::log debug => "parser init db";
-
-    my $readed   = 0;
-    my $w        = AE::cv;
-    my $interval = $self->conf('db_update_interval') || 1;
-
-    my $hup = AE::signal HUP => sub {
-        AE::log crit => "got HUP";
-        $w->send();
-    };
-
-    my $term = AE::signal TERM => sub {
-        AE::log crit => "got TERM";
-        $w->send(1);
-    };
-
-    my ( $h, $tm );
-    $h = $self->{parser_pipe} = AnyEvent::Handle->new(
-        fh      => $rd,
-        on_read => sub {
-            return unless length( $h->{rbuf} );
-            AE::log debug => "parser got " . length( $h->{rbuf} );
-            my $len;
-            for ( 1 .. 2 ) {
-                $len =
-                  $p->parser( \$h->{rbuf}, $self->{records}, $self->{stats}, );
-                last if defined $len;
-
-                # first line failed in parser
-                # find first \n position
-                my $i = index( $h->{rbuf}, "\012" );
-                if ( $i == -1 ) {
-                    return;
-                }
-                my $junk = substr( $h->{rbuf}, 0, $i + 1, '' );
-                AE::log error => "parser find junk at start position:\n"
-                  . $junk;
-            }
-            if ( !defined $len ) {
-                AE::log error => 'parser: malformed input';
-                return;
-            }
-            substr( $h->{rbuf}, 0, $len, '' );
-            $readed += $len;
-            AE::log debug => "parser read $len (total $readed)";
-        },
-        on_error => sub {
-            AE::log error => "reader error $!";
-            AE::log debug => "readed $readed";
-            eval { ref $tm eq "ARRAY" ? $tm->[1]->() : $tm->cb->(); };
-            undef $tm;
-            $w->send();
-        },
-        on_eof => sub {
-            AE::log debug => "readed $readed";
-
-            # Call timer cb
-            eval { ref $tm eq "ARRAY" ? $tm->[1]->() : $tm->cb->(); };
-            undef $tm;
-            $w->send(1);
-        }
-    );
-
-    my $create_timer;
-    $tm = (
-        $create_timer = sub {
-            return AE::timer $interval, 0, sub {
-                eval { $self->update_db($p); };
-                if ($@) {
-                    AE::log error => "failed db operations: $@";
-                    undef $tm;
-                    $w->send();
-                }
-                else {
-                    $tm = $create_timer->();
-                }
-              }
-        }
-    )->();
-
-    die unless $w->recv;
-    AE::log info => "parser say goodbye!";
-}
-
-sub update_db_hook {
-    my ( $self, $name, $cnt, $cb ) = @_;
-    return unless $cnt;
-    my $t0 = AE::time;
-    $self->{db}->begin();
-    $cb->();
-    $self->{db}->end();
-    my $elapsed = AE::time - $t0;
-    AE::log(
-        ( $elapsed > 0.5 ? "warn" : "info" ) =>
-          sprintf "Adding %i %s records took %.4f sec",
-        $cnt, $name, $elapsed
-    );
-}
-
-sub update_db {
-    my ( $self, $p ) = @_;
-    my $db     = $self->{db};
-    my $hcache = $self->{hosts_cache};
-    my $ucache = $self->{users_cache};
-
-    my ( $stat, $hosts, $users ) =
-      $p->flatten( $self->{stats}, $hcache, $ucache );
-
-    $self->update_db_hook(
-        "host",
-        scalar @$hosts,
-        sub {
-            $db->add_to_hosts($hosts);
-        }
-    );
-
-    $self->update_db_hook(
-        "user",
-        scalar @$users,
-        sub {
-            $db->add_to_users($users);
-        }
-    );
-
-    $self->update_db_hook(
-        "stat",
-        @$stat / 6,
-        sub {
-            $db->add_to_stat($stat);
-            $self->{stats} = {};
-        }
-    );
-
-    $self->update_db_hook(
-        "access",
-        @{ $self->{records} } / 15,
-        sub {
-            $db->add_to_access( $self->{records} );
-            $self->{records} = [];
-        }
-    );
 }
 
 sub openlog {
     my $self = shift;
     open $self->{access_log_fh}, '>>', $self->conf('access_log') or die $!;
 }
-
-#=cut
 
 sub writelog {
     my ( $self, $data ) = @_;
@@ -326,86 +147,6 @@ sub writelog {
 
     1;
 }
-
-=cut
-
-sub writelog {
-    my ($self, $data) = @_;
-    push @{ $self->{queue} }, sub {
-        aio_write $self->{access_log_fh}, undef, length($data), $data, 0, sub {
-            my $wrtn = shift;
-            $self->{aio} = 0;
-            #undef $self->{kostyl};
-
-            AE::log error => "bad wr status" if $wrtn < 0;
-            #AE::log debug => sysseek( $self->{access_log_fh}, 0, 1 ). " tell";
-            $self->{written} += $wrtn;
-            AE::log error => "written less than expected" if $wrtn < length($data);
-            AE::log debug=> "write $wrtn bytes: from buffer of total $self->{written}";
-            if (@{ $self->{queue} }) {
-                $self->writelog()
-            }
-            1;
-        };
-        #$self->{kostyl} = AE::timer 0.1, 0, sub {
-        #    my $t0 = AnyEvent->time;
-        #    IO::AIO::flush;
-        #    AE::log warn => sprintf "flush elapsed %0.5fs\n", (AnyEvent->time - $t0);
-        #    undef $self->{kostyl};
-        #};
-        1
-    } if length $data;
-
-    return if $self->{aio} || !@{ $self->{queue} };
-    AE::log info => "start aio";
-    $self->{aio} = 1;
-    my $aio_cb = shift @{ $self->{queue} };
-    $aio_cb->();
-    return
-}
-
-#=cut
-
-sub writelog_c {
-    my ($self, $data) = @_;
-    return if length($data) == 0;
-    push @{ $self->{queue} }, $data;
-
-    AE::log debug => "begin writing of " . (length($data)). " bytes by aio_write at $self->{written}";
-
-    AE::log critical => ++$self->{num};
-    AE::log critical => IO::AIO::nready() . " + " . IO::AIO::npending();
- 
-    return if $self->{grp};
-    
-    my $grp = $self->{grp} = aio_group sub {
-        AE::log critical => "all done";
-        undef $self->{grp};
-    };
-
-    limit $grp 1;
-
-    feed $grp sub {
-        AE::log critical => "need to feeding?";
-        my $data = shift @{ $self->{queue} } or return;
-        AE::log critical => "feeding";
-
-        aio_write $self->{access_log_fh}, undef, length($data), $data, 0, sub {
-            my $r = shift;
-            AE::log critical => "! $!" if $r < 0;
-            $self->{written} += $r;
-            AE::log critical => "! less written" if $r < length($data);
-
-            AE::log debug => "write $r bytes: from buffer of total $self->{written}";
-            1;
-        };
-        1;
-    };
-   
-    1
-}
-
-=cut
 
 sub stop {
     my $self = shift;

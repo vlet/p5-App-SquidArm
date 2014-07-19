@@ -4,7 +4,7 @@ use warnings;
 use parent qw(App::SquidArm::Helper);
 use AnyEvent;
 use AnyEvent::Handle;
-use AnyEvent::Socket;
+use App::SquidArm::Cache;
 
 sub end {
     my $self = shift;
@@ -58,33 +58,13 @@ sub begin {
     my $m_host = $self->conf('mcache_host') || '127.0.0.1';
     my $m_port = $self->conf('mcache_port') || '8001';
 
-    my ( $h, $db, $m );
+    my ( $h, $db );
 
-    $m = $self->{m} = tcp_server $m_host, $m_port, sub {
-        my ( $fh, $peer_host, $peer_port ) = @_;
-        my $handle;
-        $handle = AnyEvent::Handle->new(
-            fh       => $fh,
-            on_error => sub {
-                AE::log error => $_[2];
-                $_[0]->destroy;
-            },
-        );
-        my $report = "Memcache report\n";
-        my $mc     = $self->{memcache};
-        my $recs   = 0;
-        for my $ts ( keys %$mc ) {
-            for my $user ( keys %{ $mc->{$ts} } ) {
-                for my $host ( keys %{ $mc->{$ts}->{$user} } ) {
-                    $recs++;
-                }
-            }
-            $report .= sprintf "%s: %i records\n", $ts, $recs;
-            $recs = 0;
-        }
-        $handle->push_write($report);
-        $handle->push_shutdown();
-    };
+    $self->{m} = App::SquidArm::Cache->new(
+        host  => $m_host,
+        port  => $m_port,
+        cache => $self->{memcache},
+    )->listen;
 
     $db = $self->{db_pipe} = AnyEvent::Handle->new(
         fh       => $db_wr,

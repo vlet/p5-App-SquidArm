@@ -160,7 +160,8 @@ sub update_db {
         "stat",
         @$stat / 7,
         sub {
-            $db->add_to_stat($stat);
+            my ( $i, $u ) = $db->add_to_stat($stat);
+            AE::log warn => "updated stat with $i inserts and $u updates";
         }
     );
 

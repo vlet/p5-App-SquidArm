@@ -117,24 +117,11 @@ sub add_to_stat {
     my ( $self, $values ) = @_;
     my $dbh = $self->db;
     my $cnt = 7;
+    my ( $inserts, $updates );
     while ( my @vars = splice( @$values, 0, $cnt ) ) {
 
-        my $ret = $dbh->do( <<"        SQL", undef, @vars );
-            UPDATE traf_stat
-            SET misses=misses+?4, hits=hits+?5, reqs=reqs+?6, denies=denies+?7
-            WHERE dt=?1 AND user=(
-                SELECT id
-                FROM users
-                WHERE user=?2
-            ) AND host=(
-                SELECT id
-                FROM hosts
-                WHERE host=?3
-            )
-        SQL
-
         eval {
-            $ret = $dbh->do( <<"            SQL", undef, @vars );
+            $dbh->do( <<"            SQL", undef, @vars );
                 INSERT INTO traf_stat VALUES (?,(
                     SELECT id
                     FROM users
@@ -145,8 +132,28 @@ sub add_to_stat {
                     WHERE host=?
                 ),?,?,?,?)
             SQL
-        } if $ret == 0;
+        };
+        if ($@) {
+            $dbh->do( <<"            SQL", undef, @vars );
+                UPDATE traf_stat
+                SET misses=misses+?4, hits=hits+?5, reqs=reqs+?6, denies=denies+?7
+                WHERE dt=?1 AND user=(
+                    SELECT id
+                    FROM users
+                    WHERE user=?2
+                ) AND host=(
+                    SELECT id
+                    FROM hosts
+                    WHERE host=?3
+                )
+            SQL
+            $updates++;
+        }
+        else {
+            $inserts++;
+        }
     }
+    return ( $inserts, $updates );
 }
 
 sub add_to_hosts {

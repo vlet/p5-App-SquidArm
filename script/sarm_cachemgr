@@ -1,0 +1,25 @@
+#!/usr/bin/perl
+use strict;
+use warnings;
+use Getopt::Long;
+use AnyEvent;
+use AnyEvent::Log;
+
+my $config   = '/etc/squid3/sarm.conf';
+my $debug    = '';
+my $nodaemon = '';
+my $cwd      = undef;
+
+GetOptions(
+    "config=s"  => \$config,
+    "nodaemon"  => \$nodaemon,
+    "workdir=s" => \$cwd,
+    "debug"     => \$debug
+) or die "Error in command line arguments\n";
+
+$AnyEvent::Log::FILTER->level('info');
+
+my $conf = App::SquidArm::Conf->new( config => $config )->parse;
+die "no cachemgr tags defined in config" unless $conf->tag('cachemgr');
+
+App::SquidArm::CacheMgr->new->run($conf);

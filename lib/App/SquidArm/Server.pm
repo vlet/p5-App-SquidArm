@@ -11,7 +11,8 @@ use App::SquidArm::Helper::DB;
 
 sub new {
     my ( $class, %opts ) = @_;
-    my $self = bless {
+    my $on_error = delete $opts{on_error};
+    my $self     = bless {
         queue       => '',
         aio         => 0,
         written     => 0,
@@ -20,6 +21,9 @@ sub new {
         stats       => {},
         hosts_cache => {},
         users_cache => {},
+        ( $on_error && ref $on_error eq 'CODE' )
+        ? ( on_error => $on_error )
+        : (),
     }, $class;
 
     $self->init_parser;
@@ -45,7 +49,12 @@ sub init_parser {
                 my ( $pid, $status ) = @_;
                 AE::log critical => "parser helper PID $pid is dead: "
                   . ( $status >> 8 );
-                die;
+                if ( exists $self->{on_error} ) {
+                    $self->{on_error}->cb();
+                }
+                else {
+                    die;
+                }
             }
         );
         $self->{child_pid} = $pid;
@@ -71,6 +80,16 @@ sub init_parser {
         # Parser process
         if ($pid) {
             $0 = "squid arm [parser]";
+            $self->{db_child} = AnyEvent->child(
+                pid => $pid,
+                cb  => sub {
+                    my ( $pid, $status ) = @_;
+                    AE::log critical => "db helper PID $pid is dead: "
+                      . ( $status >> 8 );
+                    die;
+                }
+            );
+            $self->{child_pid} = $pid;
             close $db_rd;
             my $parser =
               App::SquidArm::Helper::Parser->new( conf => $self->{conf} );
@@ -131,7 +150,7 @@ sub writelog {
     };
     AE::log debug => "register kostyl";
     $self->{kostyl} = AE::timer 0.5, 0, sub {
-        AE::log warn => "kostyl started";
+        AE::log note => "kostyl started";
         undef $self->{kostyl};
         my $t0 = AnyEvent->time;
 
@@ -151,8 +170,18 @@ sub writelog {
 sub stop {
     my $self = shift;
     undef $self->{server};
-    aio_fsync $self->{access_log_fh} if $self->{access_log_fh};
+    $self->{access_log_fh}->sync if $self->{access_log_fh};
     $self;
+}
+
+sub hup {
+    my ( $self, $conf ) = @_;
+    AE::log error => "error on closing access_log: $!"
+      unless close $self->{access_log_fh};
+    $self->{conf} = $conf;
+    undef $self->{server};
+    $self->listen();
+    kill HUP => $self->{child_pid};
 }
 
 sub conf {
@@ -205,7 +234,7 @@ sub listen {
             on_read => sub {
                 my $len = rindex( $handle->{rbuf}, "\012" ) + 1;
                 return unless $len;
-                AE::log info => "parser will read $len from "
+                AE::log debug => "parser will read $len from "
                   . length( $handle->{rbuf} );
                 my $rbuf = substr $handle->{rbuf}, 0, $len, '';
                 $self->{parser_pipe}->push_write($rbuf);

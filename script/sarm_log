@@ -3,42 +3,66 @@ use strict;
 use warnings;
 use Getopt::Long;
 use AnyEvent;
+use AnyEvent::Log;
+use Proc::Daemon;
 use App::SquidArm::Server;
 use App::SquidArm::Conf;
 
-my $conf     = '/etc/squid3/sarm.conf';
+my $config   = '/etc/squid3/sarm.conf';
 my $debug    = '';
 my $nodaemon = '';
+my $cwd      = undef;
 
 GetOptions(
-    "conf=s"   => \$conf,
-    "nodaemon" => \$nodaemon,
-    "debug"    => \$debug
+    "config=s"  => \$config,
+    "nodaemon"  => \$nodaemon,
+    "workdir=s" => \$cwd,
+    "debug"     => \$debug
 ) or die "Error in command line arguments\n";
 
-$conf = App::SquidArm::Conf->new( conf => $conf )->parse;
+my $conf = App::SquidArm::Conf->new( config => $config )->parse;
 
-my $w = AE::cv;
+my $log_level =
+    $debug                          ? 'debug'
+  : defined $conf->tag('log_level') ? $conf->tag('log_level')
+  :                                   'warn';
 
-my $server = App::SquidArm::Server->new(
-    map {
-        my $value = $conf->tag($_);
-        defined $value ? ( $_ => $value->[0] ) : ()
-      } (
-        qw(host port access_log allowed db_driver db_file db_update_interval
-          parser_reload_on_restart ignore_denied )
-      ),
-)->listen;
+$AnyEvent::Log::FILTER->level($log_level);
+$AnyEvent::Log::LOG->log_to_file( $conf->tag('log_file') )
+  if defined $conf->tag('log_file');
 
-my @sig = ();
+# Init daemon process
+Proc::Daemon::Init( { defined $cwd ? ( 'work_dir' => $cwd ) : () } )
+  unless $nodaemon;
 
-my $term = sub {
-    $server->stop;
+my ( $w, $term, $server, @sig );
+
+$term = sub {
     $w->send();
+    $server->stop;
 };
 
-push @sig, AE::signal HUP  => $term;
+$server = App::SquidArm::Server->new(
+    on_error => $term,
+    %{ $conf->tags }
+)->listen();
+
+$w = AE::cv;
+
 push @sig, AE::signal TERM => $term;
 push @sig, AE::signal INT  => $term;
+
+push @sig, AE::signal HUP => sub {
+    my $newconf =
+      eval { App::SquidArm::Conf->new( config => $config )->parse; };
+    if ($@) {
+        AE::log error => "error while parsing config file. Using old config";
+    }
+    else {
+        $conf = $newconf;
+    }
+    eval { $server->hup( $conf->tags ); };
+    $term->() if $@;
+};
 
 $w->recv();

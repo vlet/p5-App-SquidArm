@@ -25,7 +25,7 @@ sub begin {
       App::SquidArm::Log->new( ignore_denied => $self->conf('ignore_denied') );
     my $db = $self->{db} = App::SquidArm::DB->new(
         db_driver => $self->conf('db_driver'),
-        db_file   => $self->conf('db_file'),
+        db_dir    => $self->conf('db_dir'),
     );
     $db->create_tables;
     AE::log debug => "init db";
@@ -40,24 +40,21 @@ sub begin {
     my ( $h, $tm );
 
     my $hup = AE::signal HUP => sub {
-        AE::log crit => "got HUP";
+        AE::log warn => "got HUP";
         eval { ref $tm eq "ARRAY" ? $tm->[1]->() : $tm->cb->(); };
         undef $tm;
         $w->send();
     };
 
     my $term = AE::signal TERM => sub {
-        AE::log crit => "got TERM";
+        AE::log warn => "got TERM";
         eval { ref $tm eq "ARRAY" ? $tm->[1]->() : $tm->cb->(); };
         undef $tm;
         $w->send(1);
     };
 
     my $int = AE::signal INT => sub {
-        AE::log crit => "got INT";
-        eval { ref $tm eq "ARRAY" ? $tm->[1]->() : $tm->cb->(); };
-        undef $tm;
-        $w->send(1);
+        AE::log error => "got INT. Ignoring...";
     };
 
     $h = $self->{db_pipe} = AnyEvent::Handle->new(
@@ -117,12 +114,10 @@ sub update_db_hook {
     my ( $self, $name, $cnt, $cb ) = @_;
     return unless $cnt;
     my $t0 = AE::time;
-    $self->{db}->begin();
     $cb->();
-    $self->{db}->end();
     my $elapsed = AE::time - $t0;
     AE::log(
-        ( $elapsed > 0.5 ? "warn" : "info" ) =>
+        ( $elapsed > 0.5 ? "note" : "info" ) =>
           sprintf "Adding %i %s records took %.4f sec",
         $cnt, $name, $elapsed
     );
@@ -161,7 +156,7 @@ sub update_db {
         @$stat / 7,
         sub {
             my ( $i, $u ) = $db->add_to_stat($stat);
-            AE::log warn => "updated stat with $i inserts and $u updates";
+            AE::log note => "updated stat with $i inserts and $u updates";
         }
     );
 

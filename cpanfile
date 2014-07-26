@@ -5,6 +5,12 @@ requires 'IO::AIO', '4.18';
 requires 'DBI','1.622';
 requires 'DBD::SQLite', '1.37';
 requires 'Dancer', '1.3110';
+requires 'Carp';
+requires 'File::Spec';
+requires 'JSON';
+requires 'MIME::Base64';
+requires 'parent';
+requires 'Proc::Daemon';
 
 on 'test' => sub {
     requires 'Test::More', '0.98';

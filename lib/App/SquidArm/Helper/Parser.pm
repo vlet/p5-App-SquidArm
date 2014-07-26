@@ -40,18 +40,17 @@ sub begin {
     };
 
     my $hup = AE::signal HUP => sub {
-        AE::log crit => "got HUP";
+        AE::log warn => "got HUP";
         $w->send();
     };
 
     my $term = AE::signal TERM => sub {
-        AE::log crit => "got TERM";
+        AE::log warn => "got TERM";
         $cleanup->(1);
     };
 
     my $int = AE::signal INT => sub {
-        AE::log crit => "got INT";
-        $cleanup->(1);
+        AE::log error => "got INT. Ignoring...";
     };
 
     $self->{memcache} ||= {};
@@ -124,7 +123,7 @@ sub begin {
 sub store_memcache {
     my ( $self, $force ) = @_;
 
-    my @ts = (localtime)[ 5, 4, 3, 2 ];
+    my @ts = (gmtime)[ 5, 4, 3, 2 ];
     $ts[0] += 1900;
     $ts[1]++;
     my $current = sprintf "%d-%02d-%02d %02d:00", @ts;

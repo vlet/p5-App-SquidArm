@@ -72,7 +72,7 @@ sub parser {
         push @$records, @data;
         next unless defined $data[8];
 
-        my @ts = ( localtime( $data[0] ) )[ 5, 4, 3, 2 ];
+        my @ts = ( gmtime( $data[0] ) )[ 5, 4, 3, 2 ];
         $ts[0] += 1900;
         $ts[1]++;
         my $ts = sprintf "%d-%02d-%02d %02d:00", @ts;

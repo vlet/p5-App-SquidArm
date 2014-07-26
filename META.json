@@ -44,10 +44,16 @@
          "requires" : {
             "AnyEvent" : "7.02",
             "AnyEvent::AIO" : "1.1",
+            "Carp" : "0",
             "DBD::SQLite" : "1.37",
             "DBI" : "1.622",
             "Dancer" : "1.3110",
+            "File::Spec" : "0",
             "IO::AIO" : "4.18",
+            "JSON" : "0",
+            "MIME::Base64" : "0",
+            "Proc::Daemon" : "0",
+            "parent" : "0",
             "perl" : "5.008005"
          }
       },
@@ -71,6 +77,6 @@
          "web" : "https://github.com/vlet/p5-App-SquidArm"
       }
    },
-   "version" : "0.02",
+   "version" : "0.03",
    "x_authority" : "cpan:CRUX"
 }

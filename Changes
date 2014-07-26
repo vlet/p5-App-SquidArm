@@ -2,6 +2,12 @@ Revision history for Perl extension App-SquidArm
 
 {{$NEXT}}
 
+0.03 2014-07-26T19:26:06Z
+    - schema refactoring: use multiple databases for access log and statistics
+    - handling HUP in main process (reopen log, reread config)
+    - improved logging (log_level and log_file options in config)
+    - sarm_log: added support for daemonization
+
 0.02 2014-07-14T18:34:54Z
     - Updated schema (added hosts/users tables, added host column to traf_stat)
     - Simplified parser

@@ -3,6 +3,11 @@ use strict;
 use warnings;
 use DBI;
 use Carp;
+use File::Spec::Functions;
+use constant {
+    STAT_DB   => 'stat',
+    ACCESS_DB => 'access_log',
+};
 
 # SQLITE_MAX_VARIABLE_NUMBER default is 999
 our $MAX_VARS = 999;
@@ -12,19 +17,12 @@ our $MAX_COMPOUND = 500;
 
 sub new {
     my ( $class, %opts ) = @_;
-    bless {%opts}, $class;
+    bless { %opts, dbh => {} }, $class;
 }
 
 sub create_tables {
     my $self = shift;
-    my $dbh  = $self->db;
-
-    $dbh->do(<<"    SQL");
-        CREATE TABLE IF NOT EXISTS partitions (
-            partition  CHAR(7),
-            UNIQUE(partition)
-        )
-    SQL
+    my $dbh  = $self->db(STAT_DB);
 
     $dbh->do(<<"    SQL");
         CREATE TABLE IF NOT EXISTS hosts (
@@ -43,7 +41,7 @@ sub create_tables {
     SQL
 
     $dbh->do(<<"    SQL");
-        CREATE TABLE IF NOT EXISTS traf_stat(
+        CREATE TABLE IF NOT EXISTS traf_stat (
             dt      TIMESTAMP NOT NULL,
             user    INTEGER NOT NULL,
             host    INTEGER NOT NULL,
@@ -57,17 +55,17 @@ sub create_tables {
         )
     SQL
 
-    $self->suf;
+    $self->dbname;
 }
 
 sub create_access_table {
 
-    my ( $self, $suf ) = @_;
-    my $dbh = $self->db;
-    croak "partition suffix not defined" unless defined $suf;
+    my ( $self, $dbname ) = @_;
+    croak "name of partition db not defined" unless defined $dbname;
+    my $dbh = $self->db($dbname);
 
     $dbh->do(<<"    SQL");
-        CREATE TABLE IF NOT EXISTS access_log_$suf (
+        CREATE TABLE IF NOT EXISTS access_log (
             unixts      INT NOT NULL,
             msec        INT NOT NULL,
             resptime    INT NOT NULL,
@@ -85,39 +83,54 @@ sub create_access_table {
             mime        TEXT
         )
     SQL
-    eval { $dbh->do( "INSERT INTO partitions VALUES (?)", undef, $suf ); };
 }
 
-sub suf {
+sub dbname {
     my ( $self, $ts ) = @_;
 
-    my ( $year, $month ) = ( defined $ts ? localtime($ts) : localtime )[ 5, 4 ];
-    my $suf = sprintf( "%d_%02d", $year + 1900, $month + 1 );
-    if ( !exists $self->{suf} || $self->{suf} ne $suf ) {
-        $self->{suf} = $suf;
-        $self->create_access_table($suf);
+    my ( $year, $month ) = ( defined $ts ? gmtime($ts) : gmtime )[ 5, 4 ];
+    my $dbname = sprintf( ACCESS_DB . "_%d_%02d", $year + 1900, $month + 1 );
+    if ( !$self->{dbh}->{$dbname} || $self->{dbname} ne $dbname ) {
+        $self->{dbname} = $dbname;
+        $self->create_access_table($dbname);
     }
-    $suf;
+    $dbname;
 }
 
 sub add_to_access {
     my ( $self, $values ) = @_;
-    my $cnt = 15;
+    my $cnt    = 15;
+    my $dbname = $self->dbname( $values->[0] );
+    my $dbh    = $self->db($dbname);
+    $dbh->do("BEGIN");
+
     while ( my @vars = splice( @$values, 0, int( $MAX_VARS / $cnt ) * $cnt ) ) {
-        my $suf   = $self->suf( $vars[0] );
-        my $query = "INSERT INTO access_log_$suf VALUES " . join ",",
+        my $query = "INSERT INTO access_log VALUES " . join ",",
           map { ( '(?' . ',?' x ( $cnt - 1 ) . ') ' ) }
           ( 1 .. int( @vars / $cnt ) );
 
-        $self->db->do( $query, undef, @vars );
+        my $check_dbname = $self->dbname( $vars[0] );
+        if ( $check_dbname ne $dbname ) {
+            $dbh->do("END");
+            undef $dbh;
+            $self->disconnect($dbname);
+
+            $dbname = $check_dbname;
+            $dbh    = $self->db($dbname);
+            $dbh->do("BEGIN");
+        }
+        $dbh->do( $query, undef, @vars );
     }
+
+    $dbh->do("END");
 }
 
 sub add_to_stat {
     my ( $self, $values ) = @_;
-    my $dbh = $self->db;
+    my $dbh = $self->db(STAT_DB);
     my $cnt = 7;
-    my ( $inserts, $updates );
+    my ( $inserts, $updates ) = ( 0, 0 );
+    $dbh->do("BEGIN");
     while ( my @vars = splice( @$values, 0, $cnt ) ) {
 
         eval {
@@ -153,55 +166,58 @@ sub add_to_stat {
             $inserts++;
         }
     }
+    $dbh->do("END");
     return ( $inserts, $updates );
 }
 
 sub add_to_hosts {
     my ( $self, $values ) = @_;
-    my $dbh = $self->db;
+    my $dbh = $self->db(STAT_DB);
+    $dbh->do("BEGIN");
     while ( my @vars = splice( @$values, 0, $MAX_COMPOUND ) ) {
         my $query = "INSERT OR IGNORE INTO hosts VALUES " . join ",",
           map { '(NULL, ?)' } ( 1 .. @vars );
 
-        $self->db->do( $query, undef, @vars );
+        $dbh->do( $query, undef, @vars );
     }
+    $dbh->do("END");
 }
 
 sub add_to_users {
     my ( $self, $values ) = @_;
-    my $dbh = $self->db;
+    my $dbh = $self->db(STAT_DB);
+    $dbh->do("BEGIN");
     while ( my @vars = splice( @$values, 0, $MAX_COMPOUND ) ) {
         my $query = "INSERT OR IGNORE INTO users VALUES " . join ",",
           map { '(NULL, ?)' } ( 1 .. @vars );
 
-        $self->db->do( $query, undef, @vars );
+        $dbh->do( $query, undef, @vars );
     }
+    $dbh->do("END");
 }
 
 sub get_hosts {
-    shift->db->selectcol_arrayref("SELECT host FROM hosts");
+    shift->db(STAT_DB)->selectcol_arrayref("SELECT host FROM hosts");
 }
 
 sub get_users {
-    shift->db->selectcol_arrayref("SELECT user FROM users");
+    shift->db(STAT_DB)->selectcol_arrayref("SELECT user FROM users");
 }
 
 sub db {
-    my $self = shift;
-    $self->{dbh} ||= DBI->connect( $self->connect_string ) or die $DBI::errstr;
+    my ( $self, $db ) = @_;
+    croak 'db name name not defined' unless $db;
+    $self->{dbh}->{$db} ||= DBI->connect( $self->connect_string($db) )
+      or die $DBI::errstr;
 }
 
 sub connect_string {
-    my $self = shift;
-    my $d    = lc $self->{db_driver};
+    my ( $self, $db ) = @_;
+    my $d = lc $self->{db_driver};
     if ( $d eq "sqlite" ) {
         (
-            "dbi:SQLite:dbname=" . $self->{db_file},
-            undef, undef,
-            {
-                RaiseError          => 1,
-                AutoInactiveDestroy => 1
-            }
+            'dbi:SQLite:dbname=' . catfile( $self->{db_dir}, $db . '.db' ),
+            undef, undef, { RaiseError => 1, }
         );
     }
     else {
@@ -211,60 +227,41 @@ sub connect_string {
 
 sub traf_stat {
     my ( $self, $year, $month, $day ) = @_;
-    my $dbh    = $self->db;
+    my $dbh    = $self->db(STAT_DB);
     my $format = '%Y-%m-%d';
     $format .= ' %H:%M' if defined $day;
-    my $start =
-      sprintf( "%d-%02d-%02d 00", $year, $month, ( defined $day ? $day : 1 ) );
-    my $end =
-      sprintf( "%d-%02d-%02d 24", $year, $month, ( defined $day ? $day : 31 ) );
+    my $start = sprintf( "%d-%02d-%02d 00:00",
+        $year, $month, ( defined $day ? $day : 1 ) );
+    my $end = sprintf( "%d-%02d-%02d 24:00",
+        $year, $month, ( defined $day ? $day : 31 ) );
 
     my $res = $dbh->selectall_arrayref( <<"    SQL", undef );
         SELECT
-            strftime('$format',dt) as ts,
+            strftime( '$format', dt, 'localtime' ) as ts,
             SUM(hits), SUM(misses), SUM(reqs), SUM(denies)
         FROM traf_stat
-        WHERE dt >= '$start' AND dt <= '$end'
+        WHERE   dt >= strftime('%Y-%m-%d %H:%M', '$start', 'utc')
+            AND dt <= strftime('%Y-%m-%d %H:%M', '$end',   'utc')
         GROUP BY ts
     SQL
-
-=cut
-
-    my $res = $dbh
-        ->selectall_arrayref(<<"    SQL", undef );
-        SELECT  strftime('$format', unixts, 'unixepoch', 'localtime') as ts,
-                SUM(s1) as hits, SUM(s2) as misses
-        FROM (
-            SELECT unixts, size as s1, 0 as s2
-            FROM access_log_$part
-            WHERE sqid_status LIKE '%HIT%'
-          UNION
-            SELECT unixts, 0 as s1, size as s2
-            FROM access_log_$part
-            WHERE sqid_status NOT LIKE '%HIT%'
-        )
-        $where
-        GROUP BY ts
-    SQL
-
-=cut
-
 }
 
 sub traf_stat_user {
     my ( $self, $year, $month, $day ) = @_;
-    my $dbh = $self->db;
-    my $start =
-      sprintf( "%d-%02d-%02d 00", $year, $month, ( defined $day ? $day : 1 ) );
-    my $end =
-      sprintf( "%d-%02d-%02d 24", $year, $month, ( defined $day ? $day : 31 ) );
+    my $dbh   = $self->db(STAT_DB);
+    my $start = sprintf( "%d-%02d-%02d 00:00",
+        $year, $month, ( defined $day ? $day : 1 ) );
+    my $end = sprintf( "%d-%02d-%02d 24:00",
+        $year, $month, ( defined $day ? $day : 31 ) );
 
     my $res = $dbh->selectall_arrayref( <<"    SQL", undef );
         SELECT
             users.user,
             SUM(hits), SUM(misses), SUM(reqs), SUM(denies)
         FROM traf_stat, users
-        WHERE dt >= '$start' AND dt <= '$end' AND users.id=traf_stat.user
+        WHERE   dt >= strftime('%Y-%m-%d %H:%M', '$start', 'utc')
+            AND dt <= strftime('%Y-%m-%d %H:%M', '$end',   'utc')
+            AND users.id=traf_stat.user
         GROUP BY users.user
     SQL
 
@@ -272,37 +269,30 @@ sub traf_stat_user {
 
 sub user_traf_stat {
     my ( $self, $user, $year, $month, $day ) = @_;
-    my $dbh = $self->db;
-    my $start =
-      sprintf( "%d-%02d-%02d 00", $year, $month, ( defined $day ? $day : 1 ) );
-    my $end =
-      sprintf( "%d-%02d-%02d 24", $year, $month, ( defined $day ? $day : 31 ) );
+    my $dbh   = $self->db(STAT_DB);
+    my $start = sprintf( "%d-%02d-%02d 00:00",
+        $year, $month, ( defined $day ? $day : 1 ) );
+    my $end = sprintf( "%d-%02d-%02d 24:00",
+        $year, $month, ( defined $day ? $day : 31 ) );
 
     my $res = $dbh->selectall_arrayref( <<"    SQL", undef, $user );
         SELECT
             hosts.host,
             SUM(hits), SUM(misses), SUM(reqs), SUM(denies)
         FROM traf_stat, hosts, users
-        WHERE dt >= '$start' AND dt <= '$end'
+        WHERE   dt >= strftime('%Y-%m-%d %H:%M', '$start', 'utc')
+            AND dt <= strftime('%Y-%m-%d %H:%M', '$end',   'utc')
             AND users.user=? AND users.id=traf_stat.user
             AND hosts.id=traf_stat.host
         GROUP BY hosts.host
     SQL
 }
 
-sub begin {
-    my $self = shift;
-    $self->db->do("BEGIN");
-}
-
-sub end {
-    my $self = shift;
-    $self->db->do("END");
-}
-
 sub disconnect {
-    my $self = shift;
-    $self->db->disconnect;
+    my ( $self, $db ) = @_;
+    croak 'no db name defined' unless $db;
+    delete $self->{dbh}->{$db};
+    ();
 }
 
 1;

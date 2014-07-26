@@ -2,6 +2,47 @@ package App::SquidArm::Conf;
 use strict;
 use warnings;
 use Carp;
+use MIME::Base64;
+
+my @tags = (
+    qw(
+      host port access_log db_driver db_dir db_update_interval
+      parser_reload_on_restart ignore_denied log_level log_file
+      allowed cachemgr mhost mport
+      )
+);
+
+sub multitag {
+    my ( $self, $tag, $value ) = @_;
+    push @{ $self->{tags}->{$tag} }, $value;
+    ();
+}
+
+sub boolean {
+    my ( $self, $tag, $value ) = @_;
+    if ( !$value || lc($value) eq "false" ) {
+        $value = 0;
+    }
+    else {
+        $value = 1;
+    }
+    $self->{tags}->{$tag} = $value;
+    ();
+}
+
+my %filter = (
+    allowed  => \&multitag,
+    cachemgr => sub {
+        my ( $self, $tag, $value ) = @_;
+        my ( $host, $user, $pass ) = split ' ', $value, 3;
+        ( $host, my $port ) = split /:/, $host;
+        $self->multitag( $tag,
+            [ $host, $port || 3128, encode_base64( $user . ':' . $pass, '' ) ]
+        );
+    },
+    parser_reload_on_restart => \&boolean,
+    ignore_denied            => \&boolean,
+);
 
 sub new {
     my ( $class, %opts ) = @_;
@@ -11,9 +52,9 @@ sub new {
 sub parse {
     my $self = shift;
 
-    croak 'no configuration file' if !exists $self->{conf};
+    croak 'no configuration file' if !exists $self->{config};
     croak "can't open configuration file: $!"
-      if !open my $fh, '<', $self->{conf};
+      if !open my $fh, '<', $self->{config};
 
     $self->{raw_conf} = do { local $/; <$fh> };
     close $fh;
@@ -23,13 +64,24 @@ sub parse {
 
 sub tag {
     my ( $self, $tag, $value ) = @_;
-    if ( @_ >= 3 ) {
-        push @{ $self->{tags}->{$tag} }, ref $value ? @$value : $value;
+    return undef unless grep { $tag eq $_ } @tags;
+
+    if ( @_ == 3 ) {
+        if ( exists $filter{$tag} ) {
+            $filter{$tag}->( $self, $tag, $value );
+        }
+        else {
+            $self->{tags}->{$tag} = $value;
+        }
         $self;
     }
     elsif ( @_ == 2 ) {
         $self->{tags}->{$tag};
     }
+}
+
+sub tags {
+    shift->{tags};
 }
 
 sub _parser {

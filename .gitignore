@@ -28,4 +28,5 @@ MYMETA.*
 
 /App-SquidArm-*
 
-/squid_access.*
+/db/
+*.log

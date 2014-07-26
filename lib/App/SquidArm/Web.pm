@@ -20,11 +20,11 @@ Dancer::Config::load();
 
 #print to_dumper(config);
 
-my $conf = App::SquidArm::Conf->new( conf => config->{conf} )->parse;
+my $conf = App::SquidArm::Conf->new( config => config->{sarm_conf} )->parse;
 
 my $db = App::SquidArm::DB->new(
-    db_driver => $conf->tag('db_driver')->[0],
-    db_file   => $conf->tag('db_file')->[0],
+    db_driver => $conf->tag('db_driver'),
+    db_dir    => $conf->tag('db_dir'),
 );
 
 hook before => sub {

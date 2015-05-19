@@ -4,6 +4,7 @@ use warnings;
 use DBI;
 use Carp;
 use File::Spec::Functions;
+use DateTime;
 use constant {
     STAT_DB   => 'stat',
     ACCESS_DB => 'access_log',
@@ -20,9 +21,17 @@ sub new {
     bless { %opts, dbh => {} }, $class;
 }
 
+sub encode_tz {
+    my $self = shift;
+    my $tz   = lc( $self->{tz} );
+    $tz =~ s{/}{__}g;
+    $tz;
+}
+
 sub create_tables {
     my $self = shift;
     my $dbh  = $self->db(STAT_DB);
+    my $tz   = $self->encode_tz;
 
     $dbh->do(<<"    SQL");
         CREATE TABLE IF NOT EXISTS hosts (
@@ -41,7 +50,7 @@ sub create_tables {
     SQL
 
     $dbh->do(<<"    SQL");
-        CREATE TABLE IF NOT EXISTS traf_stat (
+        CREATE TABLE IF NOT EXISTS traf_stat_$tz (
             dt      TIMESTAMP NOT NULL,
             user    INTEGER NOT NULL,
             host    INTEGER NOT NULL,
@@ -52,6 +61,19 @@ sub create_tables {
             FOREIGN KEY(host) REFERENCES hosts(id),
             FOREIGN KEY(user) REFERENCES users(id),
             UNIQUE(dt,user,host)
+        )
+    SQL
+
+    $dbh->do(<<"    SQL");
+        CREATE TABLE IF NOT EXISTS traf_gstat_$tz (
+            dt      TIMESTAMP NOT NULL,
+            user    INTEGER NOT NULL,
+            misses  INTEGER NOT NULL,
+            hits    INTEGER NOT NULL,
+            reqs    INTEGER NOT NULL,
+            denies  INTEGER NOT NULL,
+            FOREIGN KEY(user) REFERENCES users(id),
+            UNIQUE(dt,user)
         )
     SQL
 
@@ -128,6 +150,7 @@ sub add_to_access {
 sub add_to_stat {
     my ( $self, $values ) = @_;
     my $dbh = $self->db(STAT_DB);
+    my $tz  = $self->encode_tz;
     my $cnt = 7;
     my ( $inserts, $updates ) = ( 0, 0 );
     $dbh->do("BEGIN");
@@ -135,7 +158,7 @@ sub add_to_stat {
 
         eval {
             $dbh->do( <<"            SQL", undef, @vars );
-                INSERT INTO traf_stat VALUES (?,(
+                INSERT INTO traf_stat_$tz VALUES (?,(
                     SELECT id
                     FROM users
                     WHERE user=?
@@ -148,7 +171,7 @@ sub add_to_stat {
         };
         if ($@) {
             $dbh->do( <<"            SQL", undef, @vars );
-                UPDATE traf_stat
+                UPDATE traf_stat_$tz
                 SET misses=misses+?4, hits=hits+?5, reqs=reqs+?6, denies=denies+?7
                 WHERE dt=?1 AND user=(
                     SELECT id
@@ -165,6 +188,39 @@ sub add_to_stat {
         else {
             $inserts++;
         }
+    }
+    $dbh->do("END");
+    return ( $inserts, $updates );
+}
+
+sub add_to_gstat {
+    my ( $self, $values ) = @_;
+    my $dbh = $self->db(STAT_DB);
+    my $tz  = $self->encode_tz;
+    my $cnt = 6;
+    my ( $inserts, $updates ) = ( 0, 0 );
+    $dbh->do("BEGIN");
+    while ( my @vars = splice( @$values, 0, $cnt ) ) {
+        my $ret = $dbh->do( <<"        SQL", undef, @vars );
+            UPDATE traf_gstat_$tz
+            SET misses=misses+?3, hits=hits+?4, reqs=reqs+?5, denies=denies+?6
+            WHERE dt=?1 AND user=(
+                SELECT id
+                FROM users
+                WHERE user=?2
+            )
+        SQL
+        $updates++ if $ret;
+        eval {
+            $dbh->do( <<"            SQL", undef, @vars );
+                INSERT INTO traf_gstat_$tz VALUES (?,(
+                    SELECT id
+                    FROM users
+                    WHERE user=?
+                ),?,?,?,?)
+            SQL
+            $inserts++ if $ret;
+        } if $ret == 0;
     }
     $dbh->do("END");
     return ( $inserts, $updates );
@@ -217,7 +273,7 @@ sub connect_string {
     if ( $d eq "sqlite" ) {
         (
             'dbi:SQLite:dbname=' . catfile( $self->{db_dir}, $db . '.db' ),
-            undef, undef, { RaiseError => 1, }
+            undef, undef, { RaiseError => 1, PrintError => 0 }
         );
     }
     else {
@@ -225,65 +281,124 @@ sub connect_string {
     }
 }
 
-sub traf_stat {
-    my ( $self, $year, $month, $day ) = @_;
-    my $dbh    = $self->db(STAT_DB);
-    my $format = '%Y-%m-%d';
-    $format .= ' %H:%M' if defined $day;
-    my $start = sprintf( "%d-%02d-%02d 00:00",
-        $year, $month, ( defined $day ? $day : 1 ) );
-    my $end = sprintf( "%d-%02d-%02d 24:00",
-        $year, $month, ( defined $day ? $day : 31 ) );
+sub traf_stat_ym {
+    my ( $self, $year, $month ) = @_;
+    my $dbh = $self->db(STAT_DB);
 
-    my $res = $dbh->selectall_arrayref( <<"    SQL", undef );
+    my $dt = DateTime->new(
+        year      => $year,
+        month     => $month,
+        time_zone => $self->{tz}
+    );
+    my $start = $dt->epoch;
+    my $end = $dt->add( months => 1 )->epoch;
+
+    my @common = ( $dbh, $self->encode_tz, $year, $month );
+    my $day = 1;
+
+    # Check for DST or other changes in this month
+    if ( ( $end - $start ) % 86400 ) {
+        my $res = [];
+        my ( $s, $e ) = ( $start, $start );
+        $dt = DateTime->from_epoch( epoch => $start, time_zone => $self->{tz} );
+
+        # Itarate over each day of month to find out 3 periods:
+        #   1. days before DST change,
+        #   2. day of DST change,
+        #   3. days after DST change
+        while ( $e < $end ) {
+            $e = $dt->add( days => 1 )->epoch;
+            next unless ( $e - $s ) % 86400;
+            if ( $s != $start ) {
+                push @$res, @{ _traf_stat_ym( @common, $start, $s, $day ) };
+                $day = $dt->day - 1;
+            }
+            push @$res, @{ _traf_stat_ym( @common, $s, $e, $day, $e - $s ) };
+            $start = $e;
+            $day   = $dt->day;
+        }
+        continue {
+            $s = $e;
+        }
+        push @$res, @{ _traf_stat_ym( @common, $start, $end, $day ) }
+          if $start != $end;
+        $res;
+    }
+    else {
+        _traf_stat_ym( @common, $start, $end, $day );
+    }
+}
+
+sub _traf_stat_ym {
+    my ( $dbh, $tz, $year, $month, $start, $end, $day, $delta ) = @_;
+    $delta ||= 86400;
+
+    my $ym = sprintf "%d-%02d-", $year, $month;
+    $dbh->selectall_arrayref( <<"    SQL", undef );
         SELECT
-            strftime( '$format', dt, 'localtime' ) as ts,
+            '$ym' || 
+            substr( '00' || cast( $day + (dt - $start)/$delta as string ), -2, 2 )
+            as ts,
             SUM(hits), SUM(misses), SUM(reqs), SUM(denies)
-        FROM traf_stat
-        WHERE   dt >= strftime('%Y-%m-%d %H:%M', '$start', 'utc')
-            AND dt <= strftime('%Y-%m-%d %H:%M', '$end',   'utc')
+        FROM traf_gstat_$tz
+        WHERE dt >= $start AND dt < $end
         GROUP BY ts
     SQL
 }
 
-sub traf_stat_user {
+sub traf_stat_all_users_ymd {
     my ( $self, $year, $month, $day ) = @_;
-    my $dbh   = $self->db(STAT_DB);
-    my $start = sprintf( "%d-%02d-%02d 00:00",
-        $year, $month, ( defined $day ? $day : 1 ) );
-    my $end = sprintf( "%d-%02d-%02d 24:00",
-        $year, $month, ( defined $day ? $day : 31 ) );
+    my $dbh = $self->db(STAT_DB);
 
-    my $res = $dbh->selectall_arrayref( <<"    SQL", undef );
+    my $dt = DateTime->new(
+        year  => $year,
+        month => $month,
+        defined $day ? ( day => $day ) : (),
+        time_zone => $self->{tz}
+    );
+
+    my $start = $dt->epoch;
+    my $end = $dt->add( ( defined $day ? 'days' : 'months' ) => 1 )->epoch;
+
+    my $tz = $self->encode_tz;
+
+    $dbh->selectall_arrayref( <<"    SQL", undef );
         SELECT
             users.user,
             SUM(hits), SUM(misses), SUM(reqs), SUM(denies)
-        FROM traf_stat, users
-        WHERE   dt >= strftime('%Y-%m-%d %H:%M', '$start', 'utc')
-            AND dt <= strftime('%Y-%m-%d %H:%M', '$end',   'utc')
-            AND users.id=traf_stat.user
+        FROM traf_gstat_$tz, users
+        WHERE   dt >= $start
+            AND dt <  $end
+            AND users.id=traf_gstat_$tz.user
         GROUP BY users.user
     SQL
-
 }
 
-sub user_traf_stat {
+sub traf_stat_user_ymd {
     my ( $self, $user, $year, $month, $day ) = @_;
-    my $dbh   = $self->db(STAT_DB);
-    my $start = sprintf( "%d-%02d-%02d 00:00",
-        $year, $month, ( defined $day ? $day : 1 ) );
-    my $end = sprintf( "%d-%02d-%02d 24:00",
-        $year, $month, ( defined $day ? $day : 31 ) );
+    my $dbh = $self->db(STAT_DB);
 
-    my $res = $dbh->selectall_arrayref( <<"    SQL", undef, $user );
+    my $dt = DateTime->new(
+        year  => $year,
+        month => $month,
+        defined $day ? ( day => $day ) : (),
+        time_zone => $self->{tz}
+    );
+
+    my $start = $dt->epoch;
+    my $end = $dt->add( ( defined $day ? 'days' : 'months' ) => 1 )->epoch;
+
+    my $tz = $self->encode_tz;
+
+    $dbh->selectall_arrayref( <<"    SQL", undef, $user );
         SELECT
             hosts.host,
             SUM(hits), SUM(misses), SUM(reqs), SUM(denies)
-        FROM traf_stat, hosts, users
-        WHERE   dt >= strftime('%Y-%m-%d %H:%M', '$start', 'utc')
-            AND dt <= strftime('%Y-%m-%d %H:%M', '$end',   'utc')
-            AND users.user=? AND users.id=traf_stat.user
-            AND hosts.id=traf_stat.host
+        FROM traf_stat_$tz, hosts, users
+        WHERE   dt >= $start
+            AND dt <  $end
+            AND users.user=? AND users.id=traf_stat_$tz.user
+            AND hosts.id=traf_stat_$tz.host
         GROUP BY hosts.host
     SQL
 }

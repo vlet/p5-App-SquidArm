@@ -1,6 +1,9 @@
 Revision history for Perl extension App-SquidArm
 
 {{$NEXT}}
+    - rewrite
+    - removed frontend code to separate project
+    - Dancer -> Raisin
 
 0.03 2014-07-26T19:26:06Z
     - schema refactoring: use multiple databases for access log and statistics

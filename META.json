@@ -4,7 +4,7 @@
       "Vladimir Lettiev <thecrux@gmail.com>"
    ],
    "dynamic_config" : 0,
-   "generated_by" : "Minilla/v2.1.1, CPAN::Meta::Converter version 2.141520",
+   "generated_by" : "Minilla/v2.3.0, CPAN::Meta::Converter version 2.142060",
    "license" : [
       "perl_5"
    ],
@@ -43,16 +43,20 @@
       "runtime" : {
          "requires" : {
             "AnyEvent" : "7.02",
-            "AnyEvent::AIO" : "1.1",
+            "AnyEvent::Fork" : "0",
             "Carp" : "0",
             "DBD::SQLite" : "1.37",
             "DBI" : "1.622",
-            "Dancer" : "1.3110",
+            "DateTime" : "0",
+            "File::ShareDir" : "0",
             "File::Spec" : "0",
-            "IO::AIO" : "4.18",
             "JSON" : "0",
             "MIME::Base64" : "0",
+            "Plack" : "0",
+            "Plack::Middleware::Static" : "0",
             "Proc::Daemon" : "0",
+            "Raisin" : "0.61",
+            "Types::Standard" : "0",
             "parent" : "0",
             "perl" : "5.008005"
          }
@@ -60,8 +64,7 @@
       "test" : {
          "requires" : {
             "Test::More" : "0.98",
-            "Test::TCP" : "1.17",
-            "Text::Diff" : "1.41"
+            "Test::TCP" : "1.17"
          }
       }
    },

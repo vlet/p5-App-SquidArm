@@ -5,11 +5,9 @@ use Carp;
 use MIME::Base64;
 
 my @tags = (
-    qw(
-      host port access_log db_driver db_dir db_update_interval
-      parser_reload_on_restart ignore_denied log_level log_file
-      allowed cachemgr mhost mport
-      )
+    qw( host port access_log db_driver db_dir db_update_interval ignore_denied
+      log_level log_file allowed cachemgr mhost mport tz memcache_port
+      memcache_host debug_unixsocket dist_dir)
 );
 
 sub multitag {
@@ -40,8 +38,7 @@ my %filter = (
             [ $host, $port || 3128, encode_base64( $user . ':' . $pass, '' ) ]
         );
     },
-    parser_reload_on_restart => \&boolean,
-    ignore_denied            => \&boolean,
+    ignore_denied => \&boolean,
 );
 
 sub new {
@@ -64,7 +61,10 @@ sub parse {
 
 sub tag {
     my ( $self, $tag, $value ) = @_;
-    return undef unless grep { $tag eq $_ } @tags;
+    unless ( grep { $tag eq $_ } @tags ) {
+        carp "unknown tag $tag";
+        return undef;
+    }
 
     if ( @_ == 3 ) {
         if ( exists $filter{$tag} ) {

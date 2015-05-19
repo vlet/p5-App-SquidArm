@@ -1,7 +1,20 @@
 #!/usr/bin/perl
 use strict;
 use warnings;
-use Dancer;
-use App::SquidArm::Web;
+use Plack::Builder;
+use Plack::App::File;
+use App::SquidArm::API;
+use App::SquidArm::APIHelper;
+use File::ShareDir qw(dist_dir);
 
-dance
+my $share_dir =
+  App::SquidArm::APIHelper->conf->{dist_dir} || dist_dir('App-SquidArm');
+
+builder {
+    enable "Plack::Middleware::Static",
+      path => qr{^/(css|js|fonts|images)/},
+      root => $share_dir;
+    mount '/' =>
+      Plack::App::File->new( { file => $share_dir . '/index.html' } )->to_app;
+    mount '/api' => App::SquidArm::API->new;
+};

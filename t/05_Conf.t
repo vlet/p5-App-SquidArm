@@ -11,23 +11,25 @@ subtest 'new' => sub {
 };
 
 subtest 'parser' => sub {
-    my $conf = App::SquidArm::Conf->new( config => 'sarm.conf' );
+    my $conf = App::SquidArm::Conf->new( config => 't/sarm.conf' );
     eval { $conf->parse; };
     is $@, '', 'parse not failed' or return;
     is_deeply $conf->tags,
       {
-        'access_log'               => 'db/squid_access.log',
-        'db_driver'                => 'sqlite',
-        'db_dir'                   => 'db',
-        'db_update_interval'       => '2',
-        'host'                     => '10.160.1.8',
-        'ignore_denied'            => 1,
-        'parser_reload_on_restart' => 1,
-        'port'                     => '8000',
-        'allowed'                  => [ '10.160.0.3', '10.160.0.4' ],
-        'log_file'                 => 'sarm.log',
-        'log_level'                => 'note',
-        'cachemgr'                 => [
+        'access_log'         => 'db/squid_access.log',
+        'db_driver'          => 'sqlite',
+        'db_dir'             => 'db',
+        'db_update_interval' => '2',
+        'host'               => '10.160.1.8',
+        'ignore_denied'      => 1,
+        'port'               => '8000',
+        'allowed'            => [ '10.160.0.3', '10.160.0.4' ],
+        'debug_unixsocket'   => 'sarm_debug',
+        'log_file'           => 'sarm.log',
+        'log_level'          => 'note',
+        'tz'                 => 'Europe/Moscow',
+        'dist_dir'           => 'dist',
+        'cachemgr'           => [
             [qw(10.160.0.3 3128 d2ViYWRtaW46cGFzc3dvcmQ=)],
             [qw(10.160.0.4 3128 d2ViYWRtaW46cGFzc3dvcmQ=)]
         ],

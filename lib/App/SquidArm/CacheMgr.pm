@@ -25,7 +25,7 @@ my %pages = (
     }
 );
 
-=cut
+=pod
 
 server.all.requests = 17303296
 server.all.errors = 0
@@ -67,8 +67,9 @@ sub run {
                     $w->end;
                 },
                 sub {
-                    AE::log error =>
-"request to $squid->[0]:$squid->[1] for page $page failed\n";
+                    AE::log
+                      error => sprintf "request to %s:%s for page %s failed\n",
+                      (@$squid)[ 0, 1 ], $page;
                     $w->end;
                 }
             );
@@ -87,8 +88,10 @@ sub run {
                 $w->end;
             },
             sub {
-                AE::log error =>
-"request to $squid->[0]:$squid->[1] for page active_requests failed\n";
+                AE::log
+                  error =>
+                  sprintf "request to %s:%s for page active_requests failed\n",
+                  (@$squid)[ 0, 1 ];
                 $w->end;
             }
         );

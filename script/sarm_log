@@ -4,8 +4,9 @@ use warnings;
 use Getopt::Long;
 use AnyEvent;
 use AnyEvent::Log;
+use AnyEvent::Debug;
 use Proc::Daemon;
-use App::SquidArm::Server;
+use App::SquidArm::Daemon;
 use App::SquidArm::Conf;
 
 my $config   = '/etc/squid3/sarm.conf';
@@ -22,6 +23,10 @@ GetOptions(
 
 my $conf = App::SquidArm::Conf->new( config => $config )->parse;
 
+# Init daemon process
+Proc::Daemon::Init( { defined $cwd ? ( 'work_dir' => $cwd ) : () } )
+  unless $nodaemon;
+
 my $log_level =
     $debug                          ? 'debug'
   : defined $conf->tag('log_level') ? $conf->tag('log_level')
@@ -31,21 +36,20 @@ $AnyEvent::Log::FILTER->level($log_level);
 $AnyEvent::Log::LOG->log_to_file( $conf->tag('log_file') )
   if defined $conf->tag('log_file');
 
-# Init daemon process
-Proc::Daemon::Init( { defined $cwd ? ( 'work_dir' => $cwd ) : () } )
-  unless $nodaemon;
+our $SHELL = AnyEvent::Debug::shell "unix/", $conf->tag('debug_unixsocket')
+  if $conf->tag('debug_unixsocket');
 
-my ( $w, $term, $server, @sig );
+my ( $w, $term, $daemon, @sig );
 
 $term = sub {
     $w->send();
-    $server->stop;
+    $daemon->stop if $daemon;
 };
 
-$server = App::SquidArm::Server->new(
+$daemon = App::SquidArm::Daemon->new(
     on_error => $term,
     %{ $conf->tags }
-)->listen();
+)->run();
 
 $w = AE::cv;
 
@@ -61,7 +65,7 @@ push @sig, AE::signal HUP => sub {
     else {
         $conf = $newconf;
     }
-    eval { $server->hup( $conf->tags ); };
+    eval { $daemon->hup( $conf->tags ); };
     $term->() if $@;
 };
 

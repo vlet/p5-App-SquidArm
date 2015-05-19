@@ -1,6 +1,8 @@
 Revision history for Perl extension App-SquidArm
 
 {{$NEXT}}
+
+0.04 2015-05-19T16:01:47Z
     - rewrite
     - removed frontend code to separate project
     - Dancer -> Raisin

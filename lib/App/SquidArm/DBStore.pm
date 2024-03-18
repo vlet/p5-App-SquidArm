@@ -54,7 +54,7 @@ sub update_timer {
             $cb->() if $cb;
         }
         else {
-            $self->update_timer;
+            $self->update_timer($cb);
         }
     };
     $self;

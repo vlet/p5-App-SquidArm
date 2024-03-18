@@ -122,6 +122,41 @@ my $squid_log_re = qr/\G
     (?:\-?([\d\.\-\:a-f]+)?) # 14 server ip
     \s
     (?:\-?(\S+)?)           # 15 mime type
+    (?:.*?)  # tail
+    \n
+/x;
+
+# <150>Aug 10 16:17:59 kom-ad01-gw11 (squid-1):
+my $syslog_re = qr/^
+    \<\d+\>
+    (\w{3}\s+\d{1,2}+\d{2}\:\d{2}\:\d{2}) # 1 date time
+    \s([\w-]+)\s\(\w+\-\d+\)\:          # 2 proxy host
+    \s+
+    (\d+)           # 3 Response time (msec)
+    \s
+    ([\d\.]+)       # 4 Client ip
+    \s
+    ([A-Z_]+)       # 5 Squid status
+    \/
+    (\d{3})         # 6 Client status
+    \s
+    (\d+)           # 7 Sent reply size
+    \s
+    (\w+)           # 8 Request method
+    \s
+    (\S+)           # 9 URL
+    \s
+    (?:
+        (?:(\S+?)\\\\)? # 10 domain
+        (?:\-?(\S+?)?)  # 11 username
+        (?:\@([\S]+))?  # 12 realm
+    )
+    \s
+    (\w+)   # 13 Hierarchy status
+    \/
+    (?:\-?([\d\.\-\:a-f]+)?) # 14 server ip
+    \s
+    (?:\-?(\S+)?)           # 15 mime type
     \n
 /x;
 

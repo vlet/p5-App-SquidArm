@@ -112,15 +112,16 @@ my $squid_log_re = qr/\G
     (\S+)           # 9 URL
     \s
     (?:
-        (?:\-?(\S+?)?)  # 10 username
-        (?:\@([\S]+))?  # 11 realm
+        (?:(\S+?)\\\\)? # 10 domain
+        (?:\-?(\S+?)?)  # 11 username
+        (?:\@([\S]+))?  # 12 realm
     )
     \s
-    (\w+)   # 12 Hierarchy status
+    (\w+)   # 13 Hierarchy status
     \/
-    (?:\-?([\d\.\-\:a-f]+)?) # 13 server ip
+    (?:\-?([\d\.\-\:a-f]+)?) # 14 server ip
     \s
-    (?:\-?(\S+)?)           # 14 mime type
+    (?:\-?(\S+)?)           # 15 mime type
     \n
 /x;
 
@@ -141,9 +142,9 @@ sub _parser {
         @data = (
             $1, $2, $3,               $4, $5, $6, $7, $8,
             $9, undef, # URL -> HOST, URI
-            defined $10 ? lc($10) : undef,
             defined $11 ? lc($11) : undef,
-            $12, $13, $14
+            defined $12 ? lc($12) : defined $10 ? lc($10) : undef,
+            $13, $14, $15
         );
 
         if ( $data[8] =~ $url_re ) {

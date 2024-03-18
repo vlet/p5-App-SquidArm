@@ -7,7 +7,7 @@ use MIME::Base64;
 my @tags = (
     qw( host port access_log db_driver db_dir db_update_interval ignore_denied
       log_level log_file allowed cachemgr mhost mport tz memcache_port
-      memcache_host debug_unixsocket dist_dir)
+      memcache_host debug_unixsocket dist_dir usernames_source )
 );
 
 sub multitag {

@@ -1,42 +1,32 @@
-package App::SquidArm::API::User;
+package App::SquidArm::API::Site;
 use strict;
 use warnings;
 use Raisin::API;
 use App::SquidArm::APIHelper;
 use Types::Standard qw(Any Int Str);
 
-desc 'user route';
-resource user => sub {
+desc 'site route';
+resource site => sub {
     params(
-        requires => { name => 'user',  desc => 'user',  type => Str },
+        requires => { name => 'site',  desc => 'site',  type => Str },
         requires => { name => 'year',  desc => 'year',  type => Int },
         requires => { name => 'month', desc => 'month', type => Int },
         optional => { name => 'day',   desc => 'day',   type => Int }
     );
-    resource ':user/:year/:month(/:day)?' => sub {
+    resource ':site/:year/:month(/:day)?' => sub {
         get sub {
             my $p = shift;
             {
-                data => App::SquidArm::APIHelper->db->traf_stat_user_ymd(
-                    $p->{user}, $p->{year}, $p->{month}, $p->{day}
+                data => App::SquidArm::APIHelper->db->site_stat_ymd(
+                    $p->{site}, $p->{year}, $p->{month}, $p->{day}
                 )
             };
           }
       }
 };
 
-desc 'usernames route';
-resource usernames => sub {
-    get sub {
-        my $users = App::SquidArm::APIHelper->db->get_users;
-        {
-            data => { App::SquidArm::APIHelper->usernames->pairs(@$users) }
-        };
-    }
-};
-
-desc 'all users route';
-resource users => sub {
+desc 'all sites route';
+resource sites => sub {
     params(
         requires => { name => 'year',  desc => 'year',  type => Int },
         requires => { name => 'month', desc => 'month', type => Int },
@@ -46,7 +36,7 @@ resource users => sub {
         get sub {
             my $p = shift;
             {
-                data => App::SquidArm::APIHelper->db->traf_stat_all_users_ymd(
+                data => App::SquidArm::APIHelper->db->sites_stat_ymd(
                     $p->{year}, $p->{month}, $p->{day} )
             };
           }

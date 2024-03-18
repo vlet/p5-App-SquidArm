@@ -7,3 +7,4 @@ api_format 'json';
 
 mount 'App::SquidArm::API::User';
 mount 'App::SquidArm::API::Traf';
+mount 'App::SquidArm::API::Site';

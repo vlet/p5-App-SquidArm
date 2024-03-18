@@ -21,6 +21,33 @@ sub new {
     bless { %opts, dbh => {} }, $class;
 }
 
+sub cache {
+    my $self = shift;
+    my $path = join '/', map { defined $_ ? $_ : '' } @_;
+    return exists $self->{cache}->{$path}
+         && $self->{cache}->{$path}->{dt} > time - 3600 ?
+        $self->{cache}->{$path}->{data} : undef;
+}
+
+sub set_cache {
+    my $self = shift;
+    my $data = shift;
+    my $path = join '/', @_;
+
+    # Clear old caches
+    for my $p (keys %{ $self->{cache} }) {
+        delete $self->{cache}->{$p}
+            if $self->{cache}->{$p}->{dt} < time - 3600;
+    }
+
+    $self->{cache}->{$path} = {
+        dt => DateTime->now->set_minute(0)->set_second(0)->epoch,
+        data => $data
+    };
+
+    return $data;
+}
+
 sub encode_tz {
     my $self = shift;
     my $tz   = lc( $self->{tz} );
@@ -283,6 +310,11 @@ sub connect_string {
 
 sub traf_stat_ym {
     my ( $self, $year, $month ) = @_;
+
+    if ( my $cache = $self->cache('traf_stat_ym', $year, $month) ) {
+        return $cache
+    }
+
     my $dbh = $self->db(STAT_DB);
 
     my $dt = DateTime->new(
@@ -295,10 +327,10 @@ sub traf_stat_ym {
 
     my @common = ( $dbh, $self->encode_tz, $year, $month );
     my $day = 1;
+    my $res = [];
 
     # Check for DST or other changes in this month
     if ( ( $end - $start ) % 86400 ) {
-        my $res = [];
         my ( $s, $e ) = ( $start, $start );
         $dt = DateTime->from_epoch( epoch => $start, time_zone => $self->{tz} );
 
@@ -322,11 +354,11 @@ sub traf_stat_ym {
         }
         push @$res, @{ _traf_stat_ym( @common, $start, $end, $day ) }
           if $start != $end;
-        $res;
     }
     else {
-        _traf_stat_ym( @common, $start, $end, $day );
+        $res = _traf_stat_ym( @common, $start, $end, $day );
     }
+    $self->set_cache($res, 'traf_stat_ym', $year, $month);
 }
 
 sub _traf_stat_ym {
@@ -348,6 +380,11 @@ sub _traf_stat_ym {
 
 sub traf_stat_all_users_ymd {
     my ( $self, $year, $month, $day ) = @_;
+
+    if ( my $cache = $self->cache('traf_stat_all_users_ymd', $year, $month, $day) ) {
+        return $cache
+    }
+
     my $dbh = $self->db(STAT_DB);
 
     my $dt = DateTime->new(
@@ -362,7 +399,7 @@ sub traf_stat_all_users_ymd {
 
     my $tz = $self->encode_tz;
 
-    $dbh->selectall_arrayref( <<"    SQL", undef );
+    my $res = $dbh->selectall_arrayref( <<"    SQL", undef );
         SELECT
             users.user,
             SUM(hits), SUM(misses), SUM(reqs), SUM(denies)
@@ -372,10 +409,17 @@ sub traf_stat_all_users_ymd {
             AND users.id=traf_gstat_$tz.user
         GROUP BY users.user
     SQL
+
+    $self->set_cache($res, 'traf_stat_all_users_ymd', $year, $month, $day);
 }
 
 sub traf_stat_user_ymd {
     my ( $self, $user, $year, $month, $day ) = @_;
+
+    if ( my $cache = $self->cache('traf_stat_user_ymd', $user, $year, $month, $day) ) {
+        return $cache
+    }
+
     my $dbh = $self->db(STAT_DB);
 
     my $dt = DateTime->new(
@@ -390,7 +434,7 @@ sub traf_stat_user_ymd {
 
     my $tz = $self->encode_tz;
 
-    $dbh->selectall_arrayref( <<"    SQL", undef, $user );
+    my $res = $dbh->selectall_arrayref( <<"    SQL", undef, $user );
         SELECT
             hosts.host,
             SUM(hits), SUM(misses), SUM(reqs), SUM(denies)
@@ -401,6 +445,7 @@ sub traf_stat_user_ymd {
             AND hosts.id=traf_stat_$tz.host
         GROUP BY hosts.host
     SQL
+    $self->set_cache($res, 'traf_stat_user_ymd', $user, $year, $month, $day);
 }
 
 sub disconnect {
@@ -408,6 +453,77 @@ sub disconnect {
     croak 'no db name defined' unless $db;
     delete $self->{dbh}->{$db};
     ();
+}
+
+sub sites_stat_ymd {
+    my ( $self, $year, $month, $day ) = @_;
+
+    if ( my $cache = $self->cache('sites_stat_ymd', $year, $month, $day) ) {
+        return $cache
+    }
+
+    my $dbh = $self->db(STAT_DB);
+
+    my $dt = DateTime->new(
+        year  => $year,
+        month => $month,
+        defined $day ? ( day => $day ) : (),
+        time_zone => $self->{tz}
+    );
+
+    my $start = $dt->epoch;
+    my $end = $dt->add( ( defined $day ? 'days' : 'months' ) => 1 )->epoch;
+
+    my $tz = $self->encode_tz;
+
+    my $res = $dbh->selectall_arrayref( <<"    SQL", undef );
+        SELECT
+            hosts.host,
+            SUM(hits), SUM(misses) as mi, SUM(reqs), SUM(denies)
+        FROM traf_stat_$tz, hosts
+        WHERE   dt >= $start
+            AND dt <  $end
+            AND hosts.id=traf_stat_$tz.host
+        GROUP BY hosts.host
+        HAVING mi>0
+    SQL
+    $self->set_cache($res, 'sites_stat_ymd', $year, $month, $day);
+}
+
+sub site_stat_ymd {
+    my ( $self, $site, $year, $month, $day ) = @_;
+
+    if ( my $cache = $self->cache('site_stat_ymd', $site, $year, $month, $day) ) {
+        return $cache
+    }
+
+    my $dbh = $self->db(STAT_DB);
+
+    my $dt = DateTime->new(
+        year  => $year,
+        month => $month,
+        defined $day ? ( day => $day ) : (),
+        time_zone => $self->{tz}
+    );
+
+    my $start = $dt->epoch;
+    my $end = $dt->add( ( defined $day ? 'days' : 'months' ) => 1 )->epoch;
+
+    my $tz = $self->encode_tz;
+
+    my $res = $dbh->selectall_arrayref( <<"    SQL", undef, $site );
+        SELECT
+            users.user,
+            SUM(hits), SUM(misses), SUM(reqs), SUM(denies)
+        FROM traf_stat_$tz, hosts, users
+        WHERE   dt >= $start
+            AND dt <  $end
+            AND hosts.host=?
+            AND hosts.id=traf_stat_$tz.host
+            AND users.id=traf_stat_$tz.user
+        GROUP BY users.user
+    SQL
+    $self->set_cache($res, 'site_stat_ymd', $site, $year, $month, $day);
 }
 
 1;

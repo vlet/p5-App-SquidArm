@@ -1,0 +1,12 @@
+[Unit]
+Description=squidarm
+
+[Service]
+Type=forking
+Environment=SARM_CONFIG=/etc/squidarm/sarm.conf
+User=sarm
+Group=sarm
+ExecStart=/usr/bin/sarm_log -c "$SARM_CONFIG"
+
+[Install]
+WantedBy=multi-user.target

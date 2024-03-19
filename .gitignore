@@ -30,3 +30,5 @@ MYMETA.*
 
 /db/
 *.log
+
+/dist/

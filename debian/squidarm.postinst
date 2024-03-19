@@ -1,0 +1,14 @@
+#!/bin/sh
+
+#DEBHELPER#
+
+set -e
+
+USER="sarm"
+
+if id -u $USER > /dev/null 2>&1; then
+    chgrp ${USER} /var/log/${USER}
+    chgrp ${USER} /var/lib/${USER}
+fi
+
+

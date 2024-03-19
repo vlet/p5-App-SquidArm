@@ -1,0 +1,63 @@
+Source: libapp-squidarm-perl
+Section: perl
+Priority: optional
+Maintainer: Vladimir Lettiev <thecrux@gmail.com>
+Build-Depends: debhelper (>= 9)
+Build-Depends-Indep: libanyevent-fork-perl,
+ libanyevent-perl (>= 7.02),
+ libdatetime-perl,
+ libdbd-sqlite3-perl (>= 1.37),
+ libdbi-perl (>= 1.622),
+ libfile-sharedir-perl,
+ libjson-perl,
+ libmodule-build-tiny-perl (>= 0.035),
+ libplack-perl,
+ libproc-daemon-perl,
+ libraisin-perl (>= 0.61),
+ libtest-tcp-perl (>= 1.17),
+ libtype-tiny-perl
+Standards-Version: 3.9.5
+Homepage: https://github.com/vlet/p5-App-SquidArm
+
+Package: libapp-squidarm-perl
+Architecture: all
+Depends: ${misc:Depends}, ${perl:Depends},
+ libanyevent-fork-perl,
+ libanyevent-perl (>= 7.02),
+ libdatetime-perl,
+ libdbd-sqlite3-perl (>= 1.37),
+ libdbi-perl (>= 1.622),
+ libfile-sharedir-perl,
+ libjson-perl,
+ libplack-perl,
+ libproc-daemon-perl,
+ libraisin-perl (>= 0.61),
+ libtype-tiny-perl,
+ libyaml-perl,
+ starman
+Description: collection of tools for Squid proxy server: tcp log daemon, log analyser, and web interface with proxy usage statistic.
+ App::SquidArm is a complicated mess of code for apparenly simple task:
+ collecting and parsing Squid proxy server's log.
+ .
+ sarm_log is a daemon that listen on some tcp port for incoming connections of
+ one or several squid proxy servers. It receive plain squid log, parse it on a
+ fly, store parsed data in database and raw data in a plain file.
+ .
+ sarm_web is a web-server with web-interface for proxy administrator that
+ shows analysed data of proxy server usage: user reports (per day, month,
+ year), total statistics, etc.
+ .
+ Development status: in progress...
+ .
+ Perfomance: for a current moment it can parse and store data in a SQLite
+ database with a rate ~350 KB/s of logs on my old Pentuim IV 3GHz CPU with
+ slow SATA drive.
+ .
+ This description was automagically extracted from the module by dh-make-perl.
+
+Package: squidarm
+Architecture: all
+Depends: libapp-squidarm-perl
+Description: squidarm server
+ SquidArm Server
+

@@ -1,0 +1,54 @@
+#!/usr/bin/make -f
+# See debhelper(7) (uncomment to enable)
+# output every command that modifies files on the build system.
+DH_VERBOSE = 1
+
+# see EXAMPLES in dpkg-buildflags(1) and read /usr/share/dpkg/*
+DPKG_EXPORT_BUILDFLAGS = 1
+include /usr/share/dpkg/default.mk
+
+# see FEATURE AREAS in dpkg-buildflags(1)
+#export DEB_BUILD_MAINT_OPTIONS = hardening=+all
+
+# see ENVIRONMENT in dpkg-buildflags(1)
+# package maintainers to append CFLAGS
+#export DEB_CFLAGS_MAINT_APPEND  = -Wall -pedantic
+# package maintainers to append LDFLAGS
+#export DEB_LDFLAGS_MAINT_APPEND = -Wl,--as-needed
+
+
+# main packaging script based on dh7 syntax
+%:
+	dh $@ --with systemd
+
+# debmake generated override targets
+# This is example for Cmake (See http://bugs.debian.org/641051 )
+#override_dh_auto_configure:
+#	dh_auto_configure -- \
+#	-DCMAKE_LIBRARY_PATH=$(DEB_HOST_MULTIARCH)
+INSTALLDIR := $(CURDIR)/debian/tmp
+
+override_dh_install::
+	install -m 755 -d $(INSTALLDIR)/etc/squidarm
+	install -m 644 debian/squidarm.config $(INSTALLDIR)/etc/squidarm/sarm.conf
+	install -m 755 -d $(INSTALLDIR)/lib/systemd/system/
+	install -m 644 debian/squidarm.service $(INSTALLDIR)/lib/systemd/system/squidarm.service
+	install -m 644 debian/squidarm_web.service $(INSTALLDIR)/lib/systemd/system/squidarm_web.service
+	install -m 755 -d debian/squidarm/var/log
+	install -m 770 -d debian/squidarm/var/log/sarm
+	install -m 770 -d debian/squidarm/var/lib/sarm
+	dh_install
+
+override_dh_fixperms:
+	dh_fixperms
+	chmod 0770 debian/squidarm/var/log/sarm debian/squidarm/var/lib/sarm
+
+override_dh_clean::
+	rm -f Build
+	rm -f MYMETA.json
+	rm -f MYMETA.yml
+	rm -f _build_params
+	rm -rf blib
+	dh_clean
+
+

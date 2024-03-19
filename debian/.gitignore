@@ -1,0 +1,12 @@
+/tmp/
+/squidarm/
+/squidarm.substvars
+/squidarm.debhelper.log
+/libapp-squidarm-perl/
+/libapp-squidarm-perl.substvars
+/libapp-squidarm-perl.debhelper.log
+/files
+/.debhelper/
+/squidarm.postinst.debhelper
+/squidarm.postrm.debhelper
+/squidarm.prerm.debhelper

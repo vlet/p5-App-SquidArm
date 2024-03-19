@@ -1,0 +1,14 @@
+[Unit]
+Description=Starman squidarm webapp
+
+[Service]
+Type=forking
+Environment=SARM_CONF=/etc/squidarm/sarm.conf
+Environment=PLACK_ENV=deployment
+User=sarm
+Group=sarm
+ExecStart=/usr/bin/starman --daemonize -E production --workers=1 -l 127.0.0.1:5000 -a /usr/bin/sarm_web
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target

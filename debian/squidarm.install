@@ -1,0 +1,4 @@
+lib/systemd/system/squidarm.service
+lib/systemd/system/squidarm_web.service
+etc/squidarm/sarm.conf
+dist/* usr/share/squidarm-web

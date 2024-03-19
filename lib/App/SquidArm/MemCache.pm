@@ -143,9 +143,9 @@ sub handle_memcache_server {
     my $self = shift;
     my $c    = $self->{stats};
 
-    my $port    = $self->conf('memcache.port') || 8080;
-    my $host    = $self->conf('memcache.host');
-    my $allowed = $self->conf('memcache.allowed');
+    my $port    = $self->conf('memcache_port') || 8080;
+    my $host    = $self->conf('memcache_host');
+    my $allowed = $self->conf('memcache_allowed');
 
     $self->{server} = tcp_server $host, $port, sub {
         my ( $fh, $peer_host, $peer_port ) = @_;
